@@ -1,9 +1,9 @@
 """
-WebSocket server for real-time audio streaming with Voxtral
-Handles bidirectional audio streaming and text responses
+WebSocket server for real-time audio streaming with Voxtral (FIXED)
+Updated to resolve deprecation warnings and RunPod proxy compatibility
 """
 import asyncio
-import websockets
+import websockets.asyncio.server
 import json
 import base64
 import numpy as np
@@ -21,14 +21,14 @@ class WebSocketServer:
     """WebSocket server for real-time Voxtral streaming"""
     
     def __init__(self):
-        self.clients: Set[websockets.WebSocketServerProtocol] = set()
+        self.clients: Set = set()
         self.audio_processor = AudioProcessor()
         self.host = config.server.host
         self.port = config.server.tcp_ports[0]  # Use first TCP port (8765)
         
         logger.info(f"WebSocket server configured for {self.host}:{self.port}")
     
-    async def register_client(self, websocket: websockets.WebSocketServerProtocol):
+    async def register_client(self, websocket):
         """Register a new client connection"""
         self.clients.add(websocket)
         client_info = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
@@ -46,13 +46,13 @@ class WebSocketServer:
             }
         })
     
-    async def unregister_client(self, websocket: websockets.WebSocketServerProtocol):
+    async def unregister_client(self, websocket):
         """Unregister a client connection"""
         self.clients.discard(websocket)
         client_info = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
         logger.info(f"Client disconnected: {client_info} (Total: {len(self.clients)})")
     
-    async def send_message(self, websocket: websockets.WebSocketServerProtocol, message: Dict[str, Any]):
+    async def send_message(self, websocket, message: Dict[str, Any]):
         """Send JSON message to client"""
         try:
             await websocket.send(json.dumps(message))
@@ -61,7 +61,7 @@ class WebSocketServer:
         except Exception as e:
             logger.error(f"Error sending message: {e}")
     
-    async def handle_audio_data(self, websocket: websockets.WebSocketServerProtocol, data: Dict[str, Any]):
+    async def handle_audio_data(self, websocket, data: Dict[str, Any]):
         """Process incoming audio data"""
         try:
             start_time = time.time()
@@ -125,7 +125,7 @@ class WebSocketServer:
                 "message": f"Processing error: {str(e)}"
             })
     
-    async def handle_message(self, websocket: websockets.WebSocketServerProtocol, message: str):
+    async def handle_message(self, websocket, message: str):
         """Handle incoming WebSocket message"""
         try:
             data = json.loads(message)
@@ -166,8 +166,8 @@ class WebSocketServer:
                 "message": "Server error processing message"
             })
     
-    async def handle_client(self, websocket: websockets.WebSocketServerProtocol, path: str):
-        """Handle individual client connection"""
+    async def handle_client(self, websocket):
+        """Handle individual client connection (FIXED - removed path parameter)"""
         await self.register_client(websocket)
         
         try:
@@ -183,27 +183,33 @@ class WebSocketServer:
             await self.unregister_client(websocket)
     
     async def start_server(self):
-        """Start the WebSocket server"""
+        """Start the WebSocket server with RunPod compatibility"""
         logger.info(f"Starting WebSocket server on {self.host}:{self.port}")
         
         # Initialize Voxtral model
         if not voxtral_model.is_initialized:
             await voxtral_model.initialize()
         
-        # Start WebSocket server
-        server = await websockets.serve(
+        # Start WebSocket server with updated API
+        async with websockets.asyncio.server.serve(
             self.handle_client,
             self.host,
             self.port,
             max_size=config.streaming.buffer_size,
             ping_interval=20,
-            ping_timeout=60
-        )
-        
-        logger.info(f"WebSocket server running on ws://{self.host}:{self.port}")
-        
-        # Keep server running
-        await server.wait_closed()
+            ping_timeout=60,
+            # Additional headers for RunPod proxy compatibility
+            extra_headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            }
+        ) as server:
+            logger.info(f"WebSocket server running on ws://{self.host}:{self.port}")
+            logger.info(f"RunPod WebSocket URL: wss://[POD_ID]-{self.port}.proxy.runpod.net/ws")
+            
+            # Keep server running indefinitely
+            await asyncio.Future()  # Run forever
 
 async def main():
     """Main entry point for WebSocket server"""
