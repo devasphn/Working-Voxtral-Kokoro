@@ -1,5 +1,5 @@
 #!/bin/bash
-# Quick test script to verify Voxtral server functionality
+# Quick test script to verify Voxtral server functionality (UPDATED)
 
 echo "🧪 Testing Voxtral Real-time Streaming Server"
 echo "=============================================="
@@ -98,6 +98,13 @@ echo ""
 echo "✅ Testing completed!"
 echo "===================="
 echo ""
-echo "💡 If all tests pass, your server is ready for use!"
-echo "💡 If tests fail, check the logs: tail -f /workspace/logs/voxtral_streaming.log"
-echo "💡 To restart: ./cleanup.sh && ./run.sh"
+if lsof -i:8000 >/dev/null 2>&1 && lsof -i:8005 >/dev/null 2>&1; then
+    echo "💡 Servers are running! Visit the web UI to start using Voxtral."
+    echo "💡 🌐 Web Interface: http://localhost:8000"
+    echo "💡 📊 Health Check: http://localhost:8005/health"
+    echo "💡 🎙️  Note: First audio processing may take 30+ seconds for model loading"
+else
+    echo "💡 Some servers are not running. Try:"
+    echo "💡 ./cleanup.sh && ./run.sh"
+    echo "💡 Check logs: tail -f /workspace/logs/voxtral_streaming.log"
+fi
