@@ -1,6 +1,6 @@
 """
 FastAPI UI server with integrated WebSocket (FIXED)
-Removed model initialization from startup for faster boot
+Fixed JavaScript base64 conversion for large audio files
 """
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -366,6 +366,10 @@ async def home(request: Request):
                     isModelLoading = false;
                     break;
                     
+                case 'info':
+                    updateStatus(data.message, 'loading');
+                    break;
+                    
                 default:
                     console.log('Unknown message type:', data);
             }
@@ -448,6 +452,20 @@ async def home(request: Request):
             }
         }
         
+        // FIXED: Proper base64 conversion that handles large files
+        function arrayBufferToBase64(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            const chunkSize = 8192;
+            
+            for (let i = 0; i < bytes.length; i += chunkSize) {
+                const chunk = bytes.slice(i, i + chunkSize);
+                binary += String.fromCharCode.apply(null, chunk);
+            }
+            
+            return btoa(binary);
+        }
+        
         async function sendAudioData(audioBlob) {
             try {
                 // Convert to ArrayBuffer first, then to Float32Array
@@ -461,9 +479,8 @@ async def home(request: Request):
                 const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
                 const float32Array = audioBuffer.getChannelData(0); // Get mono channel
                 
-                // Convert to base64
-                const bytes = new Uint8Array(float32Array.buffer);
-                const base64Audio = btoa(String.fromCharCode(...bytes));
+                // FIXED: Convert to base64 properly for large files
+                const base64Audio = arrayBufferToBase64(float32Array.buffer);
                 
                 const message = {
                     type: 'audio',
