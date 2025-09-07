@@ -1,6 +1,6 @@
 #!/bin/bash
-# Enhanced run script for Voxtral REAL-TIME Streaming Server
-# Uses the new real-time components with comprehensive logging
+# FIXED Real-time run script for Voxtral Real-TIME Streaming Server
+# Properly handles Python module imports and paths
 
 set -e
 
@@ -18,11 +18,11 @@ export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
 export OMP_NUM_THREADS=4
 export TOKENIZERS_PARALLELISM=false
 
-# Additional optimizations for real-time streaming
-export TORCH_CUDNN_V8_API_ENABLED=1
-export CUDA_LAUNCH_BLOCKING=0  # Don't block CUDA calls for better performance
+# CRITICAL: Set Python path to current directory so 'src' module can be found
+export PYTHONPATH="/workspace/Voxtral-Final:$PYTHONPATH"
 
-echo "🔧 Environment variables set for real-time performance"
+echo "🔧 Environment variables and Python path set for real-time performance"
+echo "📁 PYTHONPATH: $PYTHONPATH"
 
 # Create log directory with enhanced structure
 mkdir -p /workspace/logs/realtime
@@ -77,35 +77,26 @@ check_service() {
     return 1
 }
 
-# Start health check server (lightweight, starts fast)
+# Start health check server (using Python module execution)
 echo "🩺 Starting health check server on port 8005..."
 python -m src.api.health_check &
 HEALTH_PID=$!
 
 # Give health server time to start
 echo "⏳ Waiting for health server to start..."
-sleep 2
+sleep 3
 
-# Start REAL-TIME UI server (NEW - uses real-time components)
+# Start REAL-TIME UI server (using Python module execution)
 echo "🌐 Starting REAL-TIME UI Server on port 8000..."
 echo "📋 Using enhanced real-time streaming components"
+python -m src.api.ui_server_realtime &
+UI_PID=$!
 
-# Check if real-time files exist, use them; otherwise fall back to originals
-if [ -f "src/api/ui_server_realtime.py" ]; then
-    echo "✅ Using real-time UI server"
-    python src/api/ui_server_realtime.py &
-    UI_PID=$!
-else
-    echo "⚠️  Real-time UI server not found, using original"
-    uvicorn src.api.ui_server:app --host 0.0.0.0 --port 8000 &
-    UI_PID=$!
-fi
-
-# Give UI server more time to start (real-time version may take longer)
+# Give UI server more time to start
 echo "⏳ Waiting for UI server to start..."
 sleep 5
 
-# Start TCP streaming server (enhanced for real-time)
+# Start TCP streaming server (using Python module execution)
 echo "🔗 Starting TCP streaming server on port 8766..."
 echo "📋 Note: Model initialization will happen on first request"
 python -m src.streaming.tcp_server &
@@ -119,11 +110,11 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 # Health check should be quick (5 attempts = 15 seconds max)
 check_service 8005 "Health Check Server" 5
 
-# UI server needs time for real-time components (15 attempts = 45 seconds max)  
-check_service 8000 "Real-time UI Server" 15
+# UI server needs time for real-time components (10 attempts = 30 seconds max)  
+check_service 8000 "Real-time UI Server" 10
 
-# TCP server needs time for model prep (20 attempts = 60 seconds max)
-check_service 8766 "TCP Streaming Server" 20
+# TCP server needs time for model prep (15 attempts = 45 seconds max)
+check_service 8766 "TCP Streaming Server" 15
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
@@ -193,42 +184,12 @@ echo "  📊 Check logs in real-time with: tail -f /workspace/logs/voxtral_strea
 echo "  🔍 Monitor real-time metrics in the web interface"
 echo ""
 
-# Real-time monitoring
 echo "🔄 Server is now running in REAL-TIME mode!"
-echo "📊 Monitor performance:"
-echo "   - 🎯 Target latency: <200ms per chunk"
-echo "   - 🎵 Audio chunks: 1-second intervals"
-echo "   - 📈 Processing stats available in web UI"
+echo "📊 Monitor performance and watch for any startup errors above"
 echo ""
 echo "🛑 Press Ctrl+C to stop all servers"
 echo "💡 View logs: tail -f /workspace/logs/voxtral_streaming.log"
 echo ""
 
-# Monitor processes and restart if needed
-while true; do
-    # Check if any process died
-    if ! kill -0 $HEALTH_PID 2>/dev/null; then
-        echo "⚠️  Health server died, restarting..."
-        python -m src.api.health_check &
-        HEALTH_PID=$!
-    fi
-    
-    if ! kill -0 $UI_PID 2>/dev/null; then
-        echo "⚠️  UI server died, restarting..."
-        if [ -f "src/api/ui_server_realtime.py" ]; then
-            python src/api/ui_server_realtime.py &
-        else
-            uvicorn src.api.ui_server:app --host 0.0.0.0 --port 8000 &
-        fi
-        UI_PID=$!
-    fi
-    
-    if ! kill -0 $TCP_PID 2>/dev/null; then
-        echo "⚠️  TCP server died, restarting..."
-        python -m src.streaming.tcp_server &
-        TCP_PID=$!
-    fi
-    
-    # Check every 10 seconds
-    sleep 10
-done
+# Wait for all processes to complete (servers run indefinitely)
+wait $HEALTH_PID $UI_PID $TCP_PID
