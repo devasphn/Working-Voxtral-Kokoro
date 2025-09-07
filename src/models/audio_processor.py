@@ -1,6 +1,6 @@
 """
-Audio processing module for Voxtral Real-time Streaming
-Handles log-mel spectrogram generation and audio preprocessing
+Audio processing module for Voxtral Real-time Streaming (FIXED)
+Handles log-mel spectrogram generation and audio preprocessing with corrected mel filterbank configuration
 """
 import numpy as np
 import librosa
@@ -22,17 +22,28 @@ class AudioProcessor:
         self.win_length = config.spectrogram.win_length
         self.n_fft = config.spectrogram.n_fft
         
+        # FIXED: Adjust n_fft to resolve mel filterbank warning
+        # The warning occurs when n_mels (128) is too high for n_freqs (n_fft//2 + 1)
+        # For 128 mels, we need n_fft >= 512 to get n_freqs >= 257
+        if self.n_fft < 512:
+            self.n_fft = 512
+            logger.info(f"Adjusted n_fft to {self.n_fft} to accommodate {self.n_mels} mel bins")
+        
         # Initialize mel spectrogram transform (matching Voxtral architecture)
         self.mel_transform = torchaudio.transforms.MelSpectrogram(
             sample_rate=self.sample_rate,
             n_fft=self.n_fft,
-            win_length=self.win_length,
+            win_length=self.win_length if self.win_length <= self.n_fft else self.n_fft,
             hop_length=self.hop_length,
             n_mels=self.n_mels,
-            power=2.0
+            power=2.0,
+            f_min=0.0,  # Add explicit frequency bounds
+            f_max=self.sample_rate // 2,
+            norm='slaney',  # Use slaney normalization for consistency
+            mel_scale='htk'  # Use HTK mel scale for better compatibility
         )
         
-        logger.info(f"AudioProcessor initialized with sample_rate={self.sample_rate}, n_mels={self.n_mels}")
+        logger.info(f"AudioProcessor initialized with sample_rate={self.sample_rate}, n_mels={self.n_mels}, n_fft={self.n_fft}")
     
     def preprocess_audio(self, audio_data: np.ndarray, sample_rate: Optional[int] = None) -> torch.Tensor:
         """
@@ -87,13 +98,18 @@ class AudioProcessor:
             Log-mel spectrogram tensor
         """
         try:
+            # Ensure audio tensor has the right shape
+            if len(audio_tensor.shape) == 1:
+                audio_tensor = audio_tensor.unsqueeze(0)  # Add batch dimension
+            
             # Generate mel spectrogram
             mel_spec = self.mel_transform(audio_tensor)
             
             # Convert to log scale (matching Voxtral preprocessing)
-            log_mel_spec = torch.log(mel_spec + 1e-10)  # Add small epsilon to avoid log(0)
+            # Use a slightly larger epsilon to avoid numerical issues
+            log_mel_spec = torch.log(mel_spec + 1e-8)
             
-            return log_mel_spec
+            return log_mel_spec.squeeze(0)  # Remove batch dimension
             
         except Exception as e:
             logger.error(f"Error generating log-mel spectrogram: {e}")
@@ -119,7 +135,7 @@ class AudioProcessor:
                 end_idx = min(start_idx + chunk_samples, len(audio_tensor))
                 chunk = audio_tensor[start_idx:end_idx]
                 
-                # Pad chunk to exact size if needed
+                # Pad chunk to exact size if needed (Voxtral expects 30-second chunks)
                 if len(chunk) < chunk_samples:
                     padding = chunk_samples - len(chunk)
                     chunk = torch.cat([chunk, torch.zeros(padding)])
@@ -140,16 +156,13 @@ class AudioProcessor:
             audio_chunk: Raw audio chunk from stream
             
         Returns:
-            Processed audio tensor ready for model
+            Processed audio tensor ready for model (returns raw audio, not spectrogram)
         """
         try:
-            # Preprocess the chunk
+            # Just preprocess the chunk - Voxtral will handle spectrogram internally
             audio_tensor = self.preprocess_audio(audio_chunk)
             
-            # Generate log-mel spectrogram
-            log_mel_spec = self.generate_log_mel_spectrogram(audio_tensor)
-            
-            return log_mel_spec
+            return audio_tensor
             
         except Exception as e:
             logger.error(f"Error processing streaming audio: {e}")
@@ -174,8 +187,14 @@ class AudioProcessor:
             if np.any(np.isnan(audio_data)) or np.any(np.isinf(audio_data)):
                 return False
             
-            # Check reasonable amplitude range
-            if np.max(np.abs(audio_data)) == 0:
+            # Check reasonable amplitude range (allow for silent audio with small values)
+            if np.max(np.abs(audio_data)) < 1e-10:
+                return False
+            
+            # Check for reasonable audio length (at least 0.1 seconds)
+            min_samples = int(0.1 * self.sample_rate)
+            if len(audio_data) < min_samples:
+                logger.warning(f"Audio too short: {len(audio_data)} samples, minimum: {min_samples}")
                 return False
                 
             return True
