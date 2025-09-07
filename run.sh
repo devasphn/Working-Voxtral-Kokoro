@@ -1,5 +1,5 @@
 #!/bin/bash
-# Updated run script for Voxtral Real-time Streaming (FIXED)
+# Fixed run script for Voxtral Real-time Streaming
 
 set -e
 
@@ -37,42 +37,53 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
-# Start health check server (port 8005)
+# Start health check server (port 8005) - FIXED: No reload
 echo "🩺 Starting health check server on port 8005..."
-python -m src.api.health_check &
+uvicorn src.api.health_check:app --host 0.0.0.0 --port 8005 &
 HEALTH_PID=$!
 
-# Give health server a moment to start
-sleep 1
+# Give health server time to start
+echo "⏳ Waiting for health server to start..."
+sleep 3
 
-# Start UI server with integrated WebSocket (port 8000)  
+# Start UI server with integrated WebSocket (port 8000) - FIXED: No reload to prevent conflicts  
 echo "🌐 Starting UI server with WebSocket on port 8000..."
-uvicorn src.api.ui_server:app --host 0.0.0.0 --port 8000 --reload &
+uvicorn src.api.ui_server:app --host 0.0.0.0 --port 8000 &
 UI_PID=$!
 
-# Give UI server a moment to start
-sleep 2
+# Give UI server time to start
+echo "⏳ Waiting for UI server to start..."
+sleep 3
 
-# Start only TCP streaming server (port 8766) - WebSocket now integrated in UI server
+# Start TCP streaming server (port 8766) - FIXED: Start last to avoid conflicts
 echo "🔗 Starting TCP streaming server on port 8766..."
 python -m src.streaming.tcp_server &
 TCP_PID=$!
 
-# Wait for all services to start
-sleep 3
+# Wait for all services to fully initialize
+echo "⏳ Waiting for all services to initialize..."
+sleep 5
 
-# Check if all services are running
+# Fixed service check function
 check_service() {
     local port=$1
     local service_name=$2
+    local max_retries=5
+    local retry=0
     
-    if lsof -i:$port >/dev/null 2>&1; then
-        echo "✅ $service_name is running on port $port"
-        return 0
-    else
-        echo "❌ $service_name failed to start on port $port"
-        return 1
-    fi
+    while [ $retry -lt $max_retries ]; do
+        if lsof -i:$port >/dev/null 2>&1; then
+            echo "✅ $service_name is running on port $port"
+            return 0
+        else
+            echo "⏳ Waiting for $service_name on port $port (attempt $((retry+1))/$max_retries)..."
+            sleep 2
+            retry=$((retry+1))
+        fi
+    done
+    
+    echo "❌ $service_name failed to start on port $port after $max_retries attempts"
+    return 1
 }
 
 echo ""
@@ -90,12 +101,14 @@ echo "  - WebSocket Endpoint: ws://0.0.0.0:8000/ws"
 echo "  - TCP Server: 0.0.0.0:8766"
 echo ""
 echo "🌐 RunPod Access URLs:"
-echo "  - Web UI: https://[POD_ID]-8000.proxy.runpod.net"
-echo "  - WebSocket: wss://[POD_ID]-8000.proxy.runpod.net/ws"
-echo "  - Health Check: https://[POD_ID]-8005.proxy.runpod.net/health"
+echo "  - Web UI: https://zsepay17h1p311-8000.proxy.runpod.net"
+echo "  - WebSocket: wss://zsepay17h1p311-8000.proxy.runpod.net/ws"
+echo "  - Health Check: https://zsepay17h1p311-8005.proxy.runpod.net/health"
 echo ""
 echo "📝 Logs are saved to: /workspace/logs/voxtral_streaming.log"
 echo "🔄 Press Ctrl+C to stop all servers"
+echo ""
+echo "🎯 Test the WebSocket connection by visiting the web UI and clicking 'Connect'"
 
 # Wait for all processes
 wait $HEALTH_PID $UI_PID $TCP_PID
