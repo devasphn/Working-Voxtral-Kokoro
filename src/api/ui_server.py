@@ -1,24 +1,32 @@
 """
-FastAPI UI server for web interface (FIXED)
-Updated for RunPod WebSocket proxy compatibility
+FastAPI UI server with integrated WebSocket (FIXED)
+RunPod compatible - WebSocket through HTTP port 8000
 """
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 import asyncio
 import time
+import json
+import base64
+import numpy as np
 from pathlib import Path
 
 from src.utils.config import config
 from src.models.voxtral_model import voxtral_model
+from src.models.audio_processor import AudioProcessor
+from src.utils.logging_config import logger
 
-# Initialize FastAPI app with updated configuration
+# Initialize FastAPI app
 app = FastAPI(
     title="Voxtral Real-time Streaming UI",
     description="Web interface for Voxtral real-time audio streaming",
     version="1.0.0"
 )
+
+# Initialize audio processor for WebSocket handling
+audio_processor = AudioProcessor()
 
 # Setup static files if directory exists
 static_path = Path(__file__).parent.parent.parent / "static"
@@ -236,33 +244,25 @@ async def home(request: Request):
         let isRecording = false;
         let wsUrl = '';
         
-        // Detect environment and construct WebSocket URL
+        // Detect environment and construct WebSocket URL (FIXED for RunPod)
         function detectEnvironment() {
             const hostname = window.location.hostname;
             const protocol = window.location.protocol;
             
-            // Check if running on RunPod (contains proxy.runpod.net)
+            // FIXED: RunPod WebSocket through HTTP port with /ws endpoint
             if (hostname.includes('proxy.runpod.net')) {
-                // Extract POD_ID from hostname (format: POD_ID-PORT.proxy.runpod.net)
-                const parts = hostname.split('-');
-                if (parts.length >= 2) {
-                    const podId = parts[0];
-                    // Use wss for RunPod proxy with /ws endpoint
-                    wsUrl = `wss://${podId}-8765.proxy.runpod.net/ws`;
-                    document.getElementById('envInfo').textContent = 'RunPod Cloud (Proxy)';
-                } else {
-                    // Fallback
-                    wsUrl = `wss://${hostname}/ws`;
-                    document.getElementById('envInfo').textContent = 'RunPod Cloud (Unknown format)';
-                }
+                // For RunPod, use the same host but with /ws endpoint
+                const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
+                wsUrl = `${wsProtocol}//${hostname}/ws`;
+                document.getElementById('envInfo').textContent = 'RunPod Cloud (HTTP Proxy)';
             } else if (hostname === 'localhost' || hostname === '127.0.0.1') {
                 // Local development
-                wsUrl = `ws://${hostname}:8765`;
+                wsUrl = `ws://${hostname}:8000/ws`;
                 document.getElementById('envInfo').textContent = 'Local Development';
             } else {
                 // Other cloud or custom deployment
                 const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
-                wsUrl = `${wsProtocol}//${hostname}:8765`;
+                wsUrl = `${wsProtocol}//${hostname}/ws`;
                 document.getElementById('envInfo').textContent = 'Custom Deployment';
             }
             
@@ -471,34 +471,129 @@ async def api_status():
             "error": str(e)
         }, status_code=500)
 
-# Add WebSocket endpoint for RunPod proxy compatibility
+# FIXED: WebSocket endpoint for RunPod compatibility
 @app.websocket("/ws")
-async def websocket_endpoint(websocket):
-    """WebSocket endpoint for RunPod proxy compatibility"""
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint integrated into FastAPI for RunPod compatibility"""
     await websocket.accept()
+    logger.info(f"WebSocket client connected: {websocket.client}")
     
     try:
-        # Simple echo for now - main WebSocket server handles actual logic
+        # Send welcome message
         await websocket.send_text(json.dumps({
             "type": "connection",
             "status": "connected",
-            "message": "Connected via HTTP proxy WebSocket endpoint",
-            "note": "Main WebSocket server running on port 8765"
+            "message": "Connected to Voxtral streaming server",
+            "server_config": {
+                "sample_rate": config.audio.sample_rate,
+                "chunk_size": config.audio.chunk_size,
+                "latency_target": config.streaming.latency_target_ms
+            }
         }))
         
         while True:
+            # Receive message
             data = await websocket.receive_text()
             message = json.loads(data)
+            msg_type = message.get("type")
             
-            # Echo back for testing
-            await websocket.send_text(json.dumps({
-                "type": "echo",
-                "original": message,
-                "message": "This is the HTTP proxy endpoint. Main WebSocket server is on port 8765."
-            }))
-            
+            if msg_type == "audio":
+                await handle_audio_data(websocket, message)
+                
+            elif msg_type == "ping":
+                await websocket.send_text(json.dumps({
+                    "type": "pong", 
+                    "timestamp": time.time()
+                }))
+                
+            elif msg_type == "status":
+                model_info = voxtral_model.get_model_info()
+                await websocket.send_text(json.dumps({
+                    "type": "status",
+                    "model_info": model_info
+                }))
+                
+            else:
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "message": f"Unknown message type: {msg_type}"
+                }))
+                
+    except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected")
     except Exception as e:
-        logger.error(f"WebSocket proxy error: {e}")
+        logger.error(f"WebSocket error: {e}")
+        try:
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "message": f"Server error: {str(e)}"
+            }))
+        except:
+            pass
+
+async def handle_audio_data(websocket: WebSocket, data: dict):
+    """Process incoming audio data through WebSocket"""
+    try:
+        start_time = time.time()
+        
+        # Extract audio data
+        audio_b64 = data.get("audio_data")
+        if not audio_b64:
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "message": "No audio data provided"
+            }))
+            return
+        
+        # Decode base64 audio
+        audio_bytes = base64.b64decode(audio_b64)
+        audio_array = np.frombuffer(audio_bytes, dtype=np.float32)
+        
+        # Validate audio format
+        if not audio_processor.validate_audio_format(audio_array):
+            await websocket.send_text(json.dumps({
+                "type": "error", 
+                "message": "Invalid audio format"
+            }))
+            return
+        
+        # Preprocess audio
+        audio_tensor = audio_processor.preprocess_audio(audio_array)
+        
+        # Get processing mode
+        mode = data.get("mode", "transcribe")
+        prompt = data.get("prompt", "")
+        
+        # Process with Voxtral
+        if mode == "transcribe":
+            response = await voxtral_model.transcribe_audio(audio_tensor)
+        elif mode == "understand":
+            if not prompt:
+                prompt = "What can you tell me about this audio?"
+            response = await voxtral_model.understand_audio(audio_tensor, prompt)
+        else:
+            # General processing
+            response = await voxtral_model.process_audio_stream(audio_tensor, prompt)
+        
+        processing_time = (time.time() - start_time) * 1000
+        
+        # Send response
+        await websocket.send_text(json.dumps({
+            "type": "response",
+            "mode": mode,
+            "text": response,
+            "processing_time_ms": round(processing_time, 1),
+            "audio_duration_ms": len(audio_array) / config.audio.sample_rate * 1000
+        }))
+        
+        logger.debug(f"Processed audio in {processing_time:.1f}ms")
+        
+    except Exception as e:
+        logger.error(f"Error handling audio data: {e}")
+        await websocket.send_text(json.dumps({
+            "type": "error",
+            "message": f"Processing error: {str(e)}"
+        }))
 
 # Updated startup event for FastAPI
 @app.on_event("startup")
