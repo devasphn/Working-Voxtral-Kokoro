@@ -1,5 +1,5 @@
 #!/bin/bash
-# Fixed run script for Voxtral Real-time Streaming
+# Fixed run script for Voxtral Real-time Streaming (UPDATED)
 
 set -e
 
@@ -37,38 +37,38 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
-# Start health check server (port 8005) - FIXED: No reload
+# Start health check server (port 8005) - LIGHTWEIGHT, starts fast
 echo "🩺 Starting health check server on port 8005..."
 uvicorn src.api.health_check:app --host 0.0.0.0 --port 8005 &
 HEALTH_PID=$!
 
 # Give health server time to start
 echo "⏳ Waiting for health server to start..."
-sleep 3
+sleep 2
 
-# Start UI server with integrated WebSocket (port 8000) - FIXED: No reload to prevent conflicts  
+# Start UI server with integrated WebSocket (port 8000) - FIXED: No model init during startup
 echo "🌐 Starting UI server with WebSocket on port 8000..."
 uvicorn src.api.ui_server:app --host 0.0.0.0 --port 8000 &
 UI_PID=$!
 
-# Give UI server time to start
+# Give UI server time to start (faster now without model init)
 echo "⏳ Waiting for UI server to start..."
 sleep 3
 
-# Start TCP streaming server (port 8766) - FIXED: Start last to avoid conflicts
+# Start TCP streaming server (port 8766) - This will initialize the model
 echo "🔗 Starting TCP streaming server on port 8766..."
+echo "📋 Note: Model initialization will happen in the background..."
 python -m src.streaming.tcp_server &
 TCP_PID=$!
 
-# Wait for all services to fully initialize
-echo "⏳ Waiting for all services to initialize..."
-sleep 5
+# Wait for all services to initialize (give more time for model loading)
+echo "⏳ Waiting for all services to initialize (this may take 30-60 seconds for model loading)..."
 
-# Fixed service check function
+# FIXED: Better service check function with longer timeout for model loading
 check_service() {
     local port=$1
     local service_name=$2
-    local max_retries=5
+    local max_retries=$3
     local retry=0
     
     while [ $retry -lt $max_retries ]; do
@@ -76,21 +76,29 @@ check_service() {
             echo "✅ $service_name is running on port $port"
             return 0
         else
-            echo "⏳ Waiting for $service_name on port $port (attempt $((retry+1))/$max_retries)..."
-            sleep 2
+            if [ $retry -eq 0 ]; then
+                echo "⏳ Waiting for $service_name on port $port..."
+            fi
+            sleep 3
             retry=$((retry+1))
         fi
     done
     
-    echo "❌ $service_name failed to start on port $port after $max_retries attempts"
+    echo "❌ $service_name failed to start on port $port after $((max_retries * 3)) seconds"
     return 1
 }
 
 echo ""
 echo "🔍 Checking service status..."
-check_service 8005 "Health Check Server"
-check_service 8000 "UI Server + WebSocket"
-check_service 8766 "TCP Server"
+
+# Health check should be quick (5 attempts = 15 seconds max)
+check_service 8005 "Health Check Server" 5
+
+# UI server should be quick now (10 attempts = 30 seconds max)  
+check_service 8000 "UI Server + WebSocket" 10
+
+# TCP server needs more time for model loading (20 attempts = 60 seconds max)
+check_service 8766 "TCP Server" 20
 
 echo ""
 echo "🚀 All servers started successfully!"
@@ -109,6 +117,7 @@ echo "📝 Logs are saved to: /workspace/logs/voxtral_streaming.log"
 echo "🔄 Press Ctrl+C to stop all servers"
 echo ""
 echo "🎯 Test the WebSocket connection by visiting the web UI and clicking 'Connect'"
+echo "📋 Note: First audio processing may take a few seconds while the model loads"
 
 # Wait for all processes
 wait $HEALTH_PID $UI_PID $TCP_PID
