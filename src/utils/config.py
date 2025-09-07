@@ -1,10 +1,12 @@
 """
-Configuration management for Voxtral Real-time Streaming
+Configuration management for Voxtral Real-time Streaming (FIXED)
+Updated for Pydantic v2 and pydantic-settings
 """
 import yaml
 import os
 from pathlib import Path
 from pydantic import BaseModel
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Dict, Any
 
 class ServerConfig(BaseModel):
@@ -44,16 +46,26 @@ class LoggingConfig(BaseModel):
     format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     file: str = "/workspace/logs/voxtral_streaming.log"
 
-class Config(BaseModel):
+class Config(BaseSettings):
+    """Main configuration class using BaseSettings for environment variable support"""
     server: ServerConfig = ServerConfig()
     model: ModelConfig = ModelConfig()
     audio: AudioConfig = AudioConfig()
     spectrogram: SpectrogramConfig = SpectrogramConfig()
     streaming: StreamingConfig = StreamingConfig()
     logging: LoggingConfig = LoggingConfig()
+    
+    # Pydantic v2 settings configuration
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_nested_delimiter="__",
+        case_sensitive=False,
+        extra="ignore"
+    )
 
 def load_config(config_path: str = "config.yaml") -> Config:
-    """Load configuration from YAML file"""
+    """Load configuration from YAML file with environment variable override support"""
     config_file = Path(config_path)
     
     if config_file.exists():
@@ -67,7 +79,7 @@ def load_config(config_path: str = "config.yaml") -> Config:
 # Global config instance
 config = load_config()
 
-# Environment variable overrides
+# Environment variable overrides (still supported for backward compatibility)
 if os.getenv("VOXTRAL_HTTP_PORT"):
     config.server.http_port = int(os.getenv("VOXTRAL_HTTP_PORT"))
     
