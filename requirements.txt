@@ -1,16 +1,19 @@
 # Voxtral Real-time Streaming Requirements (UPDATED)
 # Core dependencies
 torch>=2.1.0
-transformers>=4.45.0
+transformers>=4.54.0
 librosa>=0.10.1
 numpy>=1.24.0
 scipy>=1.11.0
 mistral-common[audio]>=1.8.1
+accelerate>=0.25.0
+
 # Web framework and API
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
-websockets>=12.0
-accelerate
+websockets>=13.0
+python-socketio>=5.10.0
+
 # Pydantic v2 with settings (FIXED)
 pydantic>=2.5.0
 pydantic-settings>=2.0.0
@@ -29,7 +32,6 @@ webrtcvad>=2.0.10
 noisereduce>=3.0.0
 
 # Server and networking
-python-socketio>=5.10.0
 eventlet>=0.33.3
 gunicorn>=21.2.0
 
