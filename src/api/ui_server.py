@@ -1,6 +1,6 @@
 """
 FastAPI UI server with integrated WebSocket (FIXED)
-RunPod compatible - WebSocket through HTTP port 8000
+Removed model initialization from startup for faster boot
 """
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -14,8 +14,6 @@ import numpy as np
 from pathlib import Path
 
 from src.utils.config import config
-from src.models.voxtral_model import voxtral_model
-from src.models.audio_processor import AudioProcessor
 from src.utils.logging_config import logger
 
 # Initialize FastAPI app
@@ -25,8 +23,25 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Initialize audio processor for WebSocket handling
-audio_processor = AudioProcessor()
+# Global variables for lazy initialization
+_voxtral_model = None
+_audio_processor = None
+
+def get_voxtral_model():
+    """Lazy initialization of Voxtral model"""
+    global _voxtral_model
+    if _voxtral_model is None:
+        from src.models.voxtral_model import voxtral_model
+        _voxtral_model = voxtral_model
+    return _voxtral_model
+
+def get_audio_processor():
+    """Lazy initialization of Audio processor"""
+    global _audio_processor
+    if _audio_processor is None:
+        from src.models.audio_processor import AudioProcessor
+        _audio_processor = AudioProcessor()
+    return _audio_processor
 
 # Setup static files if directory exists
 static_path = Path(__file__).parent.parent.parent / "static"
@@ -180,6 +195,12 @@ async def home(request: Request):
             font-size: 0.9em;
             border-left: 4px solid #74b9ff;
         }
+        .loading {
+            border-left: 4px solid #f39c12;
+        }
+        .loading .status {
+            border-left-color: #f39c12;
+        }
     </style>
 </head>
 <body>
@@ -196,7 +217,7 @@ async def home(request: Request):
         </div>
         
         <div class="status" id="status">
-            Initializing...
+            Initializing... Click Connect to start
         </div>
         
         <div class="controls">
@@ -240,18 +261,18 @@ async def home(request: Request):
         let ws = null;
         let mediaRecorder = null;
         let audioStream = null;
-        let audioChunks = [];
+        let audioChunks = [];  
         let isRecording = false;
         let wsUrl = '';
+        let isModelLoading = false;
         
-        // Detect environment and construct WebSocket URL (FIXED for RunPod)
+        // Detect environment and construct WebSocket URL
         function detectEnvironment() {
             const hostname = window.location.hostname;
             const protocol = window.location.protocol;
             
-            // FIXED: RunPod WebSocket through HTTP port with /ws endpoint
+            // For RunPod, use the same host but with /ws endpoint
             if (hostname.includes('proxy.runpod.net')) {
-                // For RunPod, use the same host but with /ws endpoint
                 const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
                 wsUrl = `${wsProtocol}//${hostname}/ws`;
                 document.getElementById('envInfo').textContent = 'RunPod Cloud (HTTP Proxy)';
@@ -271,8 +292,18 @@ async def home(request: Request):
         
         function updateStatus(message, type = 'info') {
             const status = document.getElementById('status');
+            const container = document.getElementById('status').parentElement;
+            
             status.textContent = message;
-            status.style.borderLeftColor = type === 'error' ? '#e17055' : type === 'success' ? '#00b894' : '#74b9ff';
+            
+            // Update visual styling based on type
+            if (type === 'loading') {
+                status.style.borderLeftColor = '#f39c12';
+                container.classList.add('loading');
+            } else {
+                container.classList.remove('loading');
+                status.style.borderLeftColor = type === 'error' ? '#e17055' : type === 'success' ? '#00b894' : '#74b9ff';
+            }
         }
         
         function updateConnectionStatus(connected) {
@@ -304,6 +335,7 @@ async def home(request: Request):
                     document.getElementById('connectBtn').disabled = false;
                     document.getElementById('startBtn').disabled = true;
                     document.getElementById('stopBtn').disabled = true;
+                    isModelLoading = false;
                 };
                 
                 ws.onerror = (error) => {
@@ -326,10 +358,12 @@ async def home(request: Request):
                     
                 case 'response':
                     displayResponse(data);
+                    isModelLoading = false;
                     break;
                     
                 case 'error':
                     updateStatus('Error: ' + data.message, 'error');
+                    isModelLoading = false;
                     break;
                     
                 default:
@@ -350,6 +384,8 @@ async def home(request: Request):
             // Calculate latency (approximate)
             const latency = data.processing_time_ms || 0;
             document.getElementById('latencyMetric').textContent = latency;
+            
+            updateStatus('Ready for next recording', 'success');
         }
         
         async function startRecording() {
@@ -382,7 +418,7 @@ async def home(request: Request):
                 
                 document.getElementById('startBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
-                updateStatus('Recording... Click stop when finished', 'success');
+                updateStatus('🎙️ Recording... Click stop when finished', 'success');
                 
             } catch (error) {
                 updateStatus('Microphone access denied: ' + error.message, 'error');
@@ -397,7 +433,13 @@ async def home(request: Request):
                 
                 document.getElementById('startBtn').disabled = false;
                 document.getElementById('stopBtn').disabled = true;
-                updateStatus('Processing audio...', 'info');
+                
+                if (!isModelLoading) {
+                    updateStatus('🤖 Processing audio... (First time may take 30+ seconds for model loading)', 'loading');
+                    isModelLoading = true;
+                } else {
+                    updateStatus('🤖 Processing audio...', 'loading');
+                }
                 
                 // Stop audio stream
                 if (audioStream) {
@@ -435,6 +477,7 @@ async def home(request: Request):
             } catch (error) {
                 updateStatus('Error sending audio: ' + error.message, 'error');
                 console.error('Audio processing error:', error);
+                isModelLoading = false;
             }
         }
         
@@ -453,6 +496,7 @@ async def home(request: Request):
 async def api_status():
     """API endpoint for server status"""
     try:
+        voxtral_model = get_voxtral_model()
         model_info = voxtral_model.get_model_info()
         return JSONResponse({
             "status": "healthy" if voxtral_model.is_initialized else "initializing",
@@ -471,7 +515,7 @@ async def api_status():
             "error": str(e)
         }, status_code=500)
 
-# FIXED: WebSocket endpoint for RunPod compatibility
+# WebSocket endpoint for RunPod compatibility
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint integrated into FastAPI for RunPod compatibility"""
@@ -507,6 +551,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 }))
                 
             elif msg_type == "status":
+                voxtral_model = get_voxtral_model()
                 model_info = voxtral_model.get_model_info()
                 await websocket.send_text(json.dumps({
                     "type": "status",
@@ -535,6 +580,18 @@ async def handle_audio_data(websocket: WebSocket, data: dict):
     """Process incoming audio data through WebSocket"""
     try:
         start_time = time.time()
+        
+        # Get models with lazy initialization
+        voxtral_model = get_voxtral_model()
+        audio_processor = get_audio_processor()
+        
+        # Initialize model if needed (first time use)
+        if not voxtral_model.is_initialized:
+            await websocket.send_text(json.dumps({
+                "type": "info",
+                "message": "Loading AI model... This may take 30+ seconds on first use"
+            }))
+            await voxtral_model.initialize()
         
         # Extract audio data
         audio_b64 = data.get("audio_data")
@@ -595,21 +652,8 @@ async def handle_audio_data(websocket: WebSocket, data: dict):
             "message": f"Processing error: {str(e)}"
         }))
 
-# Updated startup event for FastAPI
-@app.on_event("startup")
-async def startup_event():
-    """Initialize model on startup"""
-    try:
-        if not voxtral_model.is_initialized:
-            asyncio.create_task(voxtral_model.initialize())
-    except Exception as e:
-        print(f"Error during startup: {e}")
-
-# Updated shutdown event
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown"""
-    print("Shutting down Voxtral UI server...")
+# REMOVED: No automatic model initialization on startup
+# This allows the UI server to start quickly
 
 def main():
     """Run the UI server"""
