@@ -1,42 +1,33 @@
 """
-FastAPI UI server for web interface
-Serves the web UI and handles HTTP endpoints
+FastAPI UI server for web interface (FIXED)
+Updated for Pydantic v2 compatibility and modern FastAPI patterns
 """
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 import asyncio
-import json
 import time
 from pathlib import Path
 
 from src.utils.config import config
 from src.models.voxtral_model import voxtral_model
 
-# Initialize FastAPI app
+# Initialize FastAPI app with updated configuration
 app = FastAPI(
     title="Voxtral Real-time Streaming UI",
     description="Web interface for Voxtral real-time audio streaming",
     version="1.0.0"
 )
 
-# Setup static files and templates
+# Setup static files if directory exists
 static_path = Path(__file__).parent.parent.parent / "static"
-templates_path = Path(__file__).parent.parent.parent / "templates"
-
 if static_path.exists():
     app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 
-# Initialize templates if directory exists
-templates = None
-if templates_path.exists():
-    templates = Jinja2Templates(directory=str(templates_path))
-
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    """Serve the main web interface"""
+    """Serve the main web interface with improved error handling"""
     html_content = """
 <!DOCTYPE html>
 <html lang="en">
@@ -377,23 +368,40 @@ async def home(request: Request):
 @app.get("/api/status")
 async def api_status():
     """API endpoint for server status"""
-    model_info = voxtral_model.get_model_info()
-    return JSONResponse({
-        "status": "healthy" if voxtral_model.is_initialized else "initializing",
-        "timestamp": time.time(),
-        "model": model_info,
-        "config": {
-            "sample_rate": config.audio.sample_rate,
-            "tcp_ports": config.server.tcp_ports,
-            "latency_target": config.streaming.latency_target_ms
-        }
-    })
+    try:
+        model_info = voxtral_model.get_model_info()
+        return JSONResponse({
+            "status": "healthy" if voxtral_model.is_initialized else "initializing",
+            "timestamp": time.time(),
+            "model": model_info,
+            "config": {
+                "sample_rate": config.audio.sample_rate,
+                "tcp_ports": config.server.tcp_ports,
+                "latency_target": config.streaming.latency_target_ms
+            }
+        })
+    except Exception as e:
+        return JSONResponse({
+            "status": "error",
+            "timestamp": time.time(),
+            "error": str(e)
+        }, status_code=500)
 
+# Updated startup event for FastAPI
 @app.on_event("startup")
 async def startup_event():
     """Initialize model on startup"""
-    if not voxtral_model.is_initialized:
-        asyncio.create_task(voxtral_model.initialize())
+    try:
+        if not voxtral_model.is_initialized:
+            asyncio.create_task(voxtral_model.initialize())
+    except Exception as e:
+        print(f"Error during startup: {e}")
+
+# Updated shutdown event
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    print("Shutting down Voxtral UI server...")
 
 def main():
     """Run the UI server"""
