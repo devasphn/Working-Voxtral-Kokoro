@@ -1,0 +1,40 @@
+# Configuration for Voxtral Real-time Streaming
+server:
+  host: "0.0.0.0"
+  http_port: 8000
+  health_port: 8005
+  tcp_ports:
+    - 8765
+    - 8766
+  
+model:
+  name: "mistralai/Voxtral-Mini-3B-2507"
+  cache_dir: "/workspace/model_cache"
+  device: "cuda"
+  torch_dtype: "bfloat16"
+  max_memory_per_gpu: "6GB"
+  
+audio:
+  sample_rate: 16000
+  chunk_size: 1024
+  format: "int16"
+  channels: 1
+  frame_duration_ms: 30
+  
+# Mel spectrogram configuration matching Voxtral
+spectrogram:
+  n_mels: 128
+  hop_length: 160
+  win_length: 400
+  n_fft: 400
+  
+streaming:
+  max_connections: 100
+  buffer_size: 4096
+  timeout_seconds: 300
+  latency_target_ms: 200
+  
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "/workspace/logs/voxtral_streaming.log"
