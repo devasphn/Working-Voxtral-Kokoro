@@ -1,6 +1,6 @@
 """
-FastAPI UI server with integrated WebSocket (FIXED)
-Fixed JavaScript base64 conversion for large audio files
+FastAPI UI server with REAL-TIME audio streaming (COMPLETE SOLUTION)
+Fixed to provide TRUE real-time streaming with continuous audio chunks
 """
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -12,6 +12,7 @@ import json
 import base64
 import numpy as np
 from pathlib import Path
+import logging
 
 from src.utils.config import config
 from src.utils.logging_config import logger
@@ -19,9 +20,13 @@ from src.utils.logging_config import logger
 # Initialize FastAPI app
 app = FastAPI(
     title="Voxtral Real-time Streaming UI",
-    description="Web interface for Voxtral real-time audio streaming",
-    version="1.0.0"
+    description="Web interface for Voxtral REAL-TIME audio streaming",
+    version="2.0.0"
 )
+
+# Enhanced logging for real-time streaming
+streaming_logger = logging.getLogger("realtime_streaming")
+streaming_logger.setLevel(logging.DEBUG)
 
 # Global variables for lazy initialization
 _voxtral_model = None
@@ -33,6 +38,7 @@ def get_voxtral_model():
     if _voxtral_model is None:
         from src.models.voxtral_model import voxtral_model
         _voxtral_model = voxtral_model
+        streaming_logger.info("Voxtral model lazy-loaded")
     return _voxtral_model
 
 def get_audio_processor():
@@ -41,6 +47,7 @@ def get_audio_processor():
     if _audio_processor is None:
         from src.models.audio_processor import AudioProcessor
         _audio_processor = AudioProcessor()
+        streaming_logger.info("Audio processor lazy-loaded")
     return _audio_processor
 
 # Setup static files if directory exists
@@ -50,7 +57,7 @@ if static_path.exists():
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    """Serve the main web interface with RunPod WebSocket compatibility"""
+    """Serve REAL-TIME streaming web interface"""
     html_content = """
 <!DOCTYPE html>
 <html lang="en">
@@ -100,16 +107,16 @@ async def home(request: Request):
             font-weight: 600;
             min-width: 120px;
         }
-        .primary-btn {
+        .connect-btn {
             background: linear-gradient(45deg, #ff6b6b, #ee5a24);
             color: white;
         }
-        .secondary-btn {
-            background: linear-gradient(45deg, #74b9ff, #0984e3);
+        .stream-btn {
+            background: linear-gradient(45deg, #00b894, #00a085);
             color: white;
         }
-        .success-btn {
-            background: linear-gradient(45deg, #00b894, #00a085);
+        .stop-btn {
+            background: linear-gradient(45deg, #e17055, #d63031);
             color: white;
         }
         button:hover {
@@ -136,14 +143,8 @@ async def home(request: Request):
             border-left: 4px solid #74b9ff;
             white-space: pre-wrap;
             font-family: 'Courier New', monospace;
-        }
-        select, input {
-            padding: 10px;
-            border: none;
-            border-radius: 10px;
-            font-size: 16px;
-            background: rgba(255, 255, 255, 0.9);
-            color: #333;
+            max-height: 400px;
+            overflow-y: auto;
         }
         .audio-controls {
             display: flex;
@@ -186,6 +187,15 @@ async def home(request: Request):
         .disconnected {
             background: #e17055;
         }
+        .streaming {
+            background: #0984e3;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
         .url-info {
             background: rgba(255, 255, 255, 0.1);
             padding: 15px;
@@ -198,8 +208,53 @@ async def home(request: Request):
         .loading {
             border-left: 4px solid #f39c12;
         }
-        .loading .status {
-            border-left-color: #f39c12;
+        .realtime-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            background: #e17055;
+            border-radius: 50%;
+            margin-left: 10px;
+        }
+        .realtime-indicator.active {
+            background: #00b894;
+            animation: blink 1s infinite;
+        }
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.3; }
+        }
+        .volume-meter {
+            width: 100%;
+            height: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+        .volume-bar {
+            height: 100%;
+            background: linear-gradient(45deg, #00b894, #74b9ff);
+            width: 0%;
+            transition: width 0.1s;
+        }
+        .log-panel {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8em;
+        }
+        select, input {
+            padding: 10px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            background: rgba(255, 255, 255, 0.9);
+            color: #333;
         }
     </style>
 </head>
@@ -210,20 +265,22 @@ async def home(request: Request):
     
     <div class="container">
         <h1>🎙️ Voxtral Real-time Streaming</h1>
+        <p style="text-align: center; opacity: 0.8;">TRUE real-time streaming - continuous audio processing</p>
         
         <div class="url-info" id="urlInfo">
             <strong>WebSocket URL:</strong> <span id="wsUrl">Detecting...</span><br>
-            <strong>Environment:</strong> <span id="envInfo">Detecting...</span>
+            <strong>Environment:</strong> <span id="envInfo">Detecting...</span><br>
+            <strong>Mode:</strong> Real-time continuous streaming
         </div>
         
         <div class="status" id="status">
-            Initializing... Click Connect to start
+            Ready to connect. Click "Connect" to start real-time streaming.
         </div>
         
         <div class="controls">
-            <button id="connectBtn" class="primary-btn" onclick="connect()">Connect</button>
-            <button id="startBtn" class="success-btn" onclick="startRecording()" disabled>Start Recording</button>
-            <button id="stopBtn" class="secondary-btn" onclick="stopRecording()" disabled>Stop Recording</button>
+            <button id="connectBtn" class="connect-btn" onclick="connect()">Connect</button>
+            <button id="streamBtn" class="stream-btn" onclick="startRealtimeStreaming()" disabled>Start Real-time Stream</button>
+            <button id="stopBtn" class="stop-btn" onclick="stopRealtimeStreaming()" disabled>Stop Stream</button>
         </div>
         
         <div class="audio-controls">
@@ -235,93 +292,140 @@ async def home(request: Request):
             
             <label>Prompt:</label>
             <input type="text" id="promptInput" placeholder="Optional prompt..." style="flex: 1; min-width: 200px;">
+            
+            <span>Real-time:</span>
+            <span class="realtime-indicator" id="realtimeIndicator"></span>
+        </div>
+        
+        <div class="volume-meter">
+            <div class="volume-bar" id="volumeBar"></div>
         </div>
         
         <div class="metrics">
             <div class="metric">
                 <div class="metric-value" id="latencyMetric">-</div>
-                <div class="metric-label">Latency (ms)</div>
+                <div class="metric-label">Avg Latency (ms)</div>
             </div>
             <div class="metric">
-                <div class="metric-value" id="audioLengthMetric">-</div>
-                <div class="metric-label">Audio Length (s)</div>
+                <div class="metric-value" id="chunksMetric">0</div>
+                <div class="metric-label">Chunks Processed</div>
             </div>
             <div class="metric">
-                <div class="metric-value" id="processingTimeMetric">-</div>
-                <div class="metric-label">Processing Time (ms)</div>
+                <div class="metric-value" id="durationMetric">00:00</div>
+                <div class="metric-label">Stream Duration</div>
             </div>
         </div>
         
         <div class="response" id="response" style="display: none;">
-            Response will appear here...
+            Real-time responses will appear here...
+        </div>
+        
+        <div class="log-panel" id="logPanel" style="display: none;">
+            <div id="logContent"></div>
         </div>
     </div>
     
     <script>
         let ws = null;
-        let mediaRecorder = null;
-        let audioStream = null;
-        let audioChunks = [];  
-        let isRecording = false;
+        let audioContext = null;
+        let mediaStream = null;
+        let audioWorkletNode = null;
+        let isStreaming = false;
         let wsUrl = '';
-        let isModelLoading = false;
+        let chunkCounter = 0;
+        let streamStartTime = null;
+        let latencySum = 0;
+        let responseCount = 0;
+        
+        // Streaming configuration
+        const CHUNK_SIZE = 4096;  // Audio buffer size
+        const CHUNK_INTERVAL = 1000; // Send chunks every 1 second
+        const SAMPLE_RATE = 16000;
+        
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logPanel = document.getElementById('logPanel');
+            const logContent = document.getElementById('logContent');
+            
+            logPanel.style.display = 'block';
+            
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `<span style="color: #74b9ff;">[${timestamp}]</span> ${message}`;
+            logContent.appendChild(logEntry);
+            logContent.scrollTop = logContent.scrollHeight;
+            
+            console.log(`[Voxtral Real-time] ${message}`);
+        }
         
         // Detect environment and construct WebSocket URL
         function detectEnvironment() {
             const hostname = window.location.hostname;
             const protocol = window.location.protocol;
             
-            // For RunPod, use the same host but with /ws endpoint
             if (hostname.includes('proxy.runpod.net')) {
                 const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
                 wsUrl = `${wsProtocol}//${hostname}/ws`;
                 document.getElementById('envInfo').textContent = 'RunPod Cloud (HTTP Proxy)';
             } else if (hostname === 'localhost' || hostname === '127.0.0.1') {
-                // Local development
                 wsUrl = `ws://${hostname}:8000/ws`;
                 document.getElementById('envInfo').textContent = 'Local Development';
             } else {
-                // Other cloud or custom deployment
                 const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
                 wsUrl = `${wsProtocol}//${hostname}/ws`;
                 document.getElementById('envInfo').textContent = 'Custom Deployment';
             }
             
             document.getElementById('wsUrl').textContent = wsUrl;
+            log(`WebSocket URL detected: ${wsUrl}`);
         }
         
         function updateStatus(message, type = 'info') {
             const status = document.getElementById('status');
-            const container = document.getElementById('status').parentElement;
-            
             status.textContent = message;
             
-            // Update visual styling based on type
+            // Update visual styling
             if (type === 'loading') {
                 status.style.borderLeftColor = '#f39c12';
-                container.classList.add('loading');
             } else {
-                container.classList.remove('loading');
-                status.style.borderLeftColor = type === 'error' ? '#e17055' : type === 'success' ? '#00b894' : '#74b9ff';
+                status.style.borderLeftColor = type === 'error' ? '#e17055' : 
+                                               type === 'success' ? '#00b894' : '#74b9ff';
             }
+            
+            log(message, type);
         }
         
-        function updateConnectionStatus(connected) {
+        function updateConnectionStatus(connected, streaming = false) {
             const status = document.getElementById('connectionStatus');
-            status.textContent = connected ? 'Connected' : 'Disconnected';
-            status.className = 'connection-status ' + (connected ? 'connected' : 'disconnected');
+            const indicator = document.getElementById('realtimeIndicator');
+            
+            if (streaming) {
+                status.textContent = 'Streaming';
+                status.className = 'connection-status streaming';
+                indicator.classList.add('active');
+            } else if (connected) {
+                status.textContent = 'Connected';
+                status.className = 'connection-status connected';
+                indicator.classList.remove('active');
+            } else {
+                status.textContent = 'Disconnected';
+                status.className = 'connection-status disconnected';
+                indicator.classList.remove('active');
+            }
         }
         
         async function connect() {
             try {
-                updateStatus('Attempting to connect...', 'info');
+                updateStatus('Connecting to Voxtral streaming server...', 'loading');
+                log('Attempting WebSocket connection...');
+                
                 ws = new WebSocket(wsUrl);
                 
                 ws.onopen = () => {
-                    updateStatus('Connected to Voxtral streaming server', 'success');
+                    updateStatus('Connected! Ready to start real-time streaming.', 'success');
                     updateConnectionStatus(true);
                     document.getElementById('connectBtn').disabled = true;
-                    document.getElementById('startBtn').disabled = false;
+                    document.getElementById('streamBtn').disabled = false;
+                    log('WebSocket connection established');
                 };
                 
                 ws.onmessage = (event) => {
@@ -333,24 +437,27 @@ async def home(request: Request):
                     updateStatus(`Disconnected from server (Code: ${event.code})`, 'error');
                     updateConnectionStatus(false);
                     document.getElementById('connectBtn').disabled = false;
-                    document.getElementById('startBtn').disabled = true;
+                    document.getElementById('streamBtn').disabled = true;
                     document.getElementById('stopBtn').disabled = true;
-                    isModelLoading = false;
+                    log(`WebSocket connection closed: ${event.code}`);
                 };
                 
                 ws.onerror = (error) => {
                     updateStatus('Connection error - check console for details', 'error');
                     updateConnectionStatus(false);
+                    log('WebSocket error occurred');
                     console.error('WebSocket error:', error);
                 };
                 
             } catch (error) {
                 updateStatus('Failed to connect: ' + error.message, 'error');
-                console.error('Connection failed:', error);
+                log('Connection failed: ' + error.message);
             }
         }
         
         function handleWebSocketMessage(data) {
+            log(`Received message type: ${data.type}`);
+            
             switch (data.type) {
                 case 'connection':
                     updateStatus(data.message, 'success');
@@ -358,12 +465,10 @@ async def home(request: Request):
                     
                 case 'response':
                     displayResponse(data);
-                    isModelLoading = false;
                     break;
                     
                 case 'error':
                     updateStatus('Error: ' + data.message, 'error');
-                    isModelLoading = false;
                     break;
                     
                 case 'info':
@@ -371,88 +476,198 @@ async def home(request: Request):
                     break;
                     
                 default:
-                    console.log('Unknown message type:', data);
+                    log(`Unknown message type: ${data.type}`);
             }
         }
         
         function displayResponse(data) {
             const responseDiv = document.getElementById('response');
             responseDiv.style.display = 'block';
-            responseDiv.textContent = data.text;
+            
+            // Append new response with timestamp
+            const timestamp = new Date().toLocaleTimeString();
+            const responseEntry = `[${timestamp}] ${data.text}\\n`;
+            responseDiv.textContent += responseEntry;
+            responseDiv.scrollTop = responseDiv.scrollHeight;
             
             // Update metrics
-            document.getElementById('processingTimeMetric').textContent = data.processing_time_ms || '-';
-            document.getElementById('audioLengthMetric').textContent = 
-                data.audio_duration_ms ? (data.audio_duration_ms / 1000).toFixed(1) : '-';
+            responseCount++;
+            if (data.processing_time_ms) {
+                latencySum += data.processing_time_ms;
+                document.getElementById('latencyMetric').textContent = 
+                    Math.round(latencySum / responseCount);
+            }
             
-            // Calculate latency (approximate)
-            const latency = data.processing_time_ms || 0;
-            document.getElementById('latencyMetric').textContent = latency;
+            document.getElementById('chunksMetric').textContent = responseCount;
             
-            updateStatus('Ready for next recording', 'success');
+            log(`Response received: "${data.text}" (${data.processing_time_ms}ms)`);
         }
         
-        async function startRecording() {
+        function updateStreamDuration() {
+            if (streamStartTime && isStreaming) {
+                const duration = Math.floor((Date.now() - streamStartTime) / 1000);
+                const minutes = Math.floor(duration / 60).toString().padStart(2, '0');
+                const seconds = (duration % 60).toString().padStart(2, '0');
+                document.getElementById('durationMetric').textContent = `${minutes}:${seconds}`;
+            }
+        }
+        
+        // REAL-TIME AUDIO STREAMING FUNCTIONS
+        
+        async function startRealtimeStreaming() {
             try {
-                audioStream = await navigator.mediaDevices.getUserMedia({ 
+                log('Starting real-time audio streaming...');
+                updateStatus('Initializing real-time audio capture...', 'loading');
+                
+                // Request microphone access
+                mediaStream = await navigator.mediaDevices.getUserMedia({
                     audio: {
-                        sampleRate: 16000,
+                        sampleRate: SAMPLE_RATE,
                         channelCount: 1,
                         echoCancellation: true,
-                        noiseSuppression: true
+                        noiseSuppression: true,
+                        autoGainControl: true
                     }
                 });
                 
-                mediaRecorder = new MediaRecorder(audioStream, {
-                    mimeType: 'audio/webm;codecs=opus'
+                log('Microphone access granted');
+                
+                // Create AudioContext
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                    sampleRate: SAMPLE_RATE
                 });
-                audioChunks = [];
                 
-                mediaRecorder.ondataavailable = (event) => {
-                    audioChunks.push(event.data);
+                await audioContext.resume();
+                log(`Audio context created with sample rate: ${audioContext.sampleRate}`);
+                
+                // Create ScriptProcessorNode for real-time audio processing
+                audioWorkletNode = audioContext.createScriptProcessor(CHUNK_SIZE, 1, 1);
+                const source = audioContext.createMediaStreamSource(mediaStream);
+                
+                // Connect audio processing chain
+                source.connect(audioWorkletNode);
+                audioWorkletNode.connect(audioContext.destination);
+                
+                // Real-time audio processing
+                let audioBuffer = [];
+                let lastChunkTime = Date.now();
+                
+                audioWorkletNode.onaudioprocess = (event) => {
+                    if (!isStreaming) return;
+                    
+                    const inputBuffer = event.inputBuffer;
+                    const inputData = inputBuffer.getChannelData(0);
+                    
+                    // Update volume meter
+                    updateVolumeMeter(inputData);
+                    
+                    // Add audio to buffer
+                    audioBuffer.push(...inputData);
+                    
+                    // Send chunk every CHUNK_INTERVAL milliseconds
+                    const now = Date.now();
+                    if (now - lastChunkTime >= CHUNK_INTERVAL && audioBuffer.length > 0) {
+                        sendAudioChunk(new Float32Array(audioBuffer));
+                        audioBuffer = [];
+                        lastChunkTime = now;
+                    }
                 };
                 
-                mediaRecorder.onstop = async () => {
-                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                    await sendAudioData(audioBlob);
-                };
+                // Start streaming
+                isStreaming = true;
+                streamStartTime = Date.now();
                 
-                mediaRecorder.start();
-                isRecording = true;
-                
-                document.getElementById('startBtn').disabled = true;
+                // Update UI
+                document.getElementById('streamBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
-                updateStatus('🎙️ Recording... Click stop when finished', 'success');
+                updateConnectionStatus(true, true);
+                updateStatus('🎙️ Real-time streaming active - speak into microphone', 'success');
+                
+                // Start duration timer
+                setInterval(updateStreamDuration, 1000);
+                
+                log('Real-time streaming started successfully');
                 
             } catch (error) {
-                updateStatus('Microphone access denied: ' + error.message, 'error');
-                console.error('Recording error:', error);
+                updateStatus('Failed to start streaming: ' + error.message, 'error');
+                log('Streaming start failed: ' + error.message);
+                console.error('Streaming error:', error);
             }
         }
         
-        function stopRecording() {
-            if (mediaRecorder && isRecording) {
-                mediaRecorder.stop();
-                isRecording = false;
+        function stopRealtimeStreaming() {
+            isStreaming = false;
+            
+            log('Stopping real-time streaming...');
+            
+            if (audioWorkletNode) {
+                audioWorkletNode.disconnect();
+                audioWorkletNode = null;
+            }
+            
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+            
+            // Update UI
+            document.getElementById('streamBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            updateConnectionStatus(true, false);
+            updateStatus('Real-time streaming stopped. Ready to stream again.', 'info');
+            
+            // Reset volume meter
+            document.getElementById('volumeBar').style.width = '0%';
+            
+            log('Real-time streaming stopped');
+        }
+        
+        function updateVolumeMeter(audioData) {
+            // Calculate RMS volume
+            let sum = 0;
+            for (let i = 0; i < audioData.length; i++) {
+                sum += audioData[i] * audioData[i];
+            }
+            const rms = Math.sqrt(sum / audioData.length);
+            const volume = Math.min(100, rms * 100 * 10); // Scale and limit to 100%
+            
+            document.getElementById('volumeBar').style.width = volume + '%';
+        }
+        
+        function sendAudioChunk(audioData) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('Cannot send audio - WebSocket not connected');
+                return;
+            }
+            
+            try {
+                // Convert Float32Array to base64
+                const base64Audio = arrayBufferToBase64(audioData.buffer);
                 
-                document.getElementById('startBtn').disabled = false;
-                document.getElementById('stopBtn').disabled = true;
+                const message = {
+                    type: 'audio_chunk',
+                    audio_data: base64Audio,
+                    mode: document.getElementById('modeSelect').value,
+                    prompt: document.getElementById('promptInput').value,
+                    chunk_id: chunkCounter++,
+                    timestamp: Date.now()
+                };
                 
-                if (!isModelLoading) {
-                    updateStatus('🤖 Processing audio... (First time may take 30+ seconds for model loading)', 'loading');
-                    isModelLoading = true;
-                } else {
-                    updateStatus('🤖 Processing audio...', 'loading');
-                }
+                ws.send(JSON.stringify(message));
+                log(`Sent audio chunk ${chunkCounter} (${audioData.length} samples)`);
                 
-                // Stop audio stream
-                if (audioStream) {
-                    audioStream.getTracks().forEach(track => track.stop());
-                }
+            } catch (error) {
+                log('Error sending audio chunk: ' + error.message);
+                console.error('Audio chunk error:', error);
             }
         }
         
-        // FIXED: Proper base64 conversion that handles large files
+        // Helper function for base64 conversion
         function arrayBufferToBase64(buffer) {
             const bytes = new Uint8Array(buffer);
             let binary = '';
@@ -466,42 +681,21 @@ async def home(request: Request):
             return btoa(binary);
         }
         
-        async function sendAudioData(audioBlob) {
-            try {
-                // Convert to ArrayBuffer first, then to Float32Array
-                const arrayBuffer = await audioBlob.arrayBuffer();
-                
-                // Create an audio context to decode the audio
-                const audioContext = new (window.AudioContext || window.webkitAudioContext)({
-                    sampleRate: 16000
-                });
-                
-                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-                const float32Array = audioBuffer.getChannelData(0); // Get mono channel
-                
-                // FIXED: Convert to base64 properly for large files
-                const base64Audio = arrayBufferToBase64(float32Array.buffer);
-                
-                const message = {
-                    type: 'audio',
-                    audio_data: base64Audio,
-                    mode: document.getElementById('modeSelect').value,
-                    prompt: document.getElementById('promptInput').value
-                };
-                
-                ws.send(JSON.stringify(message));
-                
-            } catch (error) {
-                updateStatus('Error sending audio: ' + error.message, 'error');
-                console.error('Audio processing error:', error);
-                isModelLoading = false;
-            }
-        }
-        
         // Initialize on page load
         window.addEventListener('load', () => {
             detectEnvironment();
-            updateStatus('Click Connect to start');
+            updateStatus('Ready to connect for real-time streaming');
+            log('Application initialized');
+        });
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (isStreaming) {
+                stopRealtimeStreaming();
+            }
+            if (ws) {
+                ws.close();
+            }
         });
     </script>
 </body>
@@ -532,23 +726,25 @@ async def api_status():
             "error": str(e)
         }, status_code=500)
 
-# WebSocket endpoint for RunPod compatibility
+# WebSocket endpoint for REAL-TIME streaming
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint integrated into FastAPI for RunPod compatibility"""
+    """WebSocket endpoint for REAL-TIME continuous audio streaming"""
     await websocket.accept()
-    logger.info(f"WebSocket client connected: {websocket.client}")
+    client_id = f"{websocket.client.host}:{websocket.client.port}"
+    streaming_logger.info(f"[REALTIME] Client connected: {client_id}")
     
     try:
         # Send welcome message
         await websocket.send_text(json.dumps({
             "type": "connection",
             "status": "connected",
-            "message": "Connected to Voxtral streaming server",
+            "message": "Connected to Voxtral real-time streaming server",
             "server_config": {
                 "sample_rate": config.audio.sample_rate,
                 "chunk_size": config.audio.chunk_size,
-                "latency_target": config.streaming.latency_target_ms
+                "latency_target": config.streaming.latency_target_ms,
+                "streaming_mode": "real_time_continuous"
             }
         }))
         
@@ -558,8 +754,11 @@ async def websocket_endpoint(websocket: WebSocket):
             message = json.loads(data)
             msg_type = message.get("type")
             
-            if msg_type == "audio":
-                await handle_audio_data(websocket, message)
+            streaming_logger.debug(f"[REALTIME] Received message type: {msg_type} from {client_id}")
+            
+            if msg_type == "audio_chunk":
+                # Handle real-time audio chunk
+                await handle_realtime_audio_chunk(websocket, message, client_id)
                 
             elif msg_type == "ping":
                 await websocket.send_text(json.dumps({
@@ -576,15 +775,16 @@ async def websocket_endpoint(websocket: WebSocket):
                 }))
                 
             else:
+                streaming_logger.warning(f"[REALTIME] Unknown message type: {msg_type}")
                 await websocket.send_text(json.dumps({
                     "type": "error",
                     "message": f"Unknown message type: {msg_type}"
                 }))
                 
     except WebSocketDisconnect:
-        logger.info("WebSocket client disconnected")
+        streaming_logger.info(f"[REALTIME] Client disconnected: {client_id}")
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        streaming_logger.error(f"[REALTIME] WebSocket error for {client_id}: {e}")
         try:
             await websocket.send_text(json.dumps({
                 "type": "error",
@@ -593,10 +793,13 @@ async def websocket_endpoint(websocket: WebSocket):
         except:
             pass
 
-async def handle_audio_data(websocket: WebSocket, data: dict):
-    """Process incoming audio data through WebSocket"""
+async def handle_realtime_audio_chunk(websocket: WebSocket, data: dict, client_id: str):
+    """Process real-time audio chunks as they arrive"""
     try:
-        start_time = time.time()
+        chunk_start_time = time.time()
+        chunk_id = data.get("chunk_id", 0)
+        
+        streaming_logger.info(f"[REALTIME] Processing chunk {chunk_id} for {client_id}")
         
         # Get models with lazy initialization
         voxtral_model = get_voxtral_model()
@@ -604,15 +807,18 @@ async def handle_audio_data(websocket: WebSocket, data: dict):
         
         # Initialize model if needed (first time use)
         if not voxtral_model.is_initialized:
+            streaming_logger.info(f"[REALTIME] Initializing Voxtral model for {client_id}")
             await websocket.send_text(json.dumps({
                 "type": "info",
-                "message": "Loading AI model... This may take 30+ seconds on first use"
+                "message": "Loading AI model for real-time processing... This may take 30+ seconds"
             }))
             await voxtral_model.initialize()
+            streaming_logger.info(f"[REALTIME] Model initialized for {client_id}")
         
-        # Extract audio data
+        # Extract and validate audio data
         audio_b64 = data.get("audio_data")
         if not audio_b64:
+            streaming_logger.warning(f"[REALTIME] No audio data in chunk {chunk_id}")
             await websocket.send_text(json.dumps({
                 "type": "error",
                 "message": "No audio data provided"
@@ -620,60 +826,88 @@ async def handle_audio_data(websocket: WebSocket, data: dict):
             return
         
         # Decode base64 audio
-        audio_bytes = base64.b64decode(audio_b64)
-        audio_array = np.frombuffer(audio_bytes, dtype=np.float32)
+        try:
+            audio_bytes = base64.b64decode(audio_b64)
+            audio_array = np.frombuffer(audio_bytes, dtype=np.float32)
+            streaming_logger.debug(f"[REALTIME] Decoded {len(audio_array)} audio samples from chunk {chunk_id}")
+        except Exception as e:
+            streaming_logger.error(f"[REALTIME] Audio decoding error for chunk {chunk_id}: {e}")
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "message": f"Audio decoding error: {str(e)}"
+            }))
+            return
         
         # Validate audio format
         if not audio_processor.validate_audio_format(audio_array):
+            streaming_logger.warning(f"[REALTIME] Invalid audio format in chunk {chunk_id}")
             await websocket.send_text(json.dumps({
                 "type": "error", 
-                "message": "Invalid audio format"
+                "message": "Invalid audio format - chunk too small or corrupted"
             }))
             return
         
         # Preprocess audio
-        audio_tensor = audio_processor.preprocess_audio(audio_array)
+        try:
+            audio_tensor = audio_processor.preprocess_audio(audio_array)
+            streaming_logger.debug(f"[REALTIME] Preprocessed audio tensor shape: {audio_tensor.shape}")
+        except Exception as e:
+            streaming_logger.error(f"[REALTIME] Audio preprocessing error for chunk {chunk_id}: {e}")
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "message": f"Audio preprocessing error: {str(e)}"
+            }))
+            return
         
-        # Get processing mode
+        # Get processing parameters
         mode = data.get("mode", "transcribe")
         prompt = data.get("prompt", "")
         
-        # Process with Voxtral
-        if mode == "transcribe":
-            response = await voxtral_model.transcribe_audio(audio_tensor)
-        elif mode == "understand":
-            if not prompt:
-                prompt = "What can you tell me about this audio?"
-            response = await voxtral_model.understand_audio(audio_tensor, prompt)
-        else:
-            # General processing
-            response = await voxtral_model.process_audio_stream(audio_tensor, prompt)
+        streaming_logger.debug(f"[REALTIME] Processing chunk {chunk_id} in mode '{mode}'")
         
-        processing_time = (time.time() - start_time) * 1000
+        # Process with Voxtral
+        try:
+            if mode == "transcribe":
+                response = await voxtral_model.transcribe_audio(audio_tensor)
+            elif mode == "understand":
+                if not prompt:
+                    prompt = "What can you tell me about this audio?"
+                response = await voxtral_model.understand_audio(audio_tensor, prompt)
+            else:
+                response = await voxtral_model.process_audio_stream(audio_tensor, prompt)
+                
+            processing_time = (time.time() - chunk_start_time) * 1000
+            
+            streaming_logger.info(f"[REALTIME] Chunk {chunk_id} processed in {processing_time:.1f}ms: '{response[:50]}...'")
+            
+        except Exception as e:
+            streaming_logger.error(f"[REALTIME] Voxtral processing error for chunk {chunk_id}: {e}")
+            response = f"Processing error: {str(e)}"
+            processing_time = (time.time() - chunk_start_time) * 1000
         
         # Send response
         await websocket.send_text(json.dumps({
             "type": "response",
             "mode": mode,
             "text": response,
+            "chunk_id": chunk_id,
             "processing_time_ms": round(processing_time, 1),
-            "audio_duration_ms": len(audio_array) / config.audio.sample_rate * 1000
+            "audio_duration_ms": len(audio_array) / config.audio.sample_rate * 1000,
+            "timestamp": data.get("timestamp", time.time())
         }))
         
-        logger.debug(f"Processed audio in {processing_time:.1f}ms")
+        streaming_logger.info(f"[REALTIME] Response sent for chunk {chunk_id} to {client_id}")
         
     except Exception as e:
-        logger.error(f"Error handling audio data: {e}")
+        streaming_logger.error(f"[REALTIME] Error handling audio chunk: {e}")
         await websocket.send_text(json.dumps({
             "type": "error",
-            "message": f"Processing error: {str(e)}"
+            "message": f"Chunk processing error: {str(e)}"
         }))
 
-# REMOVED: No automatic model initialization on startup
-# This allows the UI server to start quickly
-
 def main():
-    """Run the UI server"""
+    """Run the real-time streaming UI server"""
+    streaming_logger.info("Starting Voxtral Real-time Streaming UI Server")
     uvicorn.run(
         app,
         host=config.server.host,
