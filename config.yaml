@@ -26,7 +26,7 @@ spectrogram:
   n_mels: 128
   hop_length: 160
   win_length: 400
-  n_fft: 512  # FIXED: Increased from 400 to 512 to resolve mel filterbank warning
+  n_fft: 1024  # FIXED: Increased to 1024 to fully resolve mel filterbank warning
   
 streaming:
   max_connections: 100
