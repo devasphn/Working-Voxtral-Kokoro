@@ -1,6 +1,6 @@
 """
-TCP server for real-time audio streaming (alternative to WebSocket)
-Handles raw TCP connections for low-level audio streaming
+TCP server for real-time audio streaming (FIXED)
+Simplified to avoid port conflicts and initialization issues
 """
 import asyncio
 import json
@@ -12,21 +12,49 @@ import time
 from typing import Dict, Any, Set
 import traceback
 
-from src.models.voxtral_model import voxtral_model
-from src.models.audio_processor import AudioProcessor
 from src.utils.config import config
 from src.utils.logging_config import logger
+
+# Import with error handling to avoid circular imports
+try:
+    from src.models.voxtral_model import voxtral_model
+    from src.models.audio_processor import AudioProcessor
+except ImportError as e:
+    logger.warning(f"Import warning in TCP server: {e}")
+    voxtral_model = None
+    AudioProcessor = None
 
 class TCPStreamingServer:
     """TCP server for real-time audio streaming"""
     
     def __init__(self):
         self.clients: Set[asyncio.StreamWriter] = set()
-        self.audio_processor = AudioProcessor()
+        self.audio_processor = None
         self.host = config.server.host
         self.port = config.server.tcp_ports[1]  # Use second TCP port (8766)
+        self.initialized = False
         
         logger.info(f"TCP server configured for {self.host}:{self.port}")
+    
+    async def initialize_components(self):
+        """Initialize audio processor and model"""
+        try:
+            if not self.initialized:
+                # Initialize audio processor
+                if AudioProcessor:
+                    self.audio_processor = AudioProcessor()
+                    logger.info("TCP server audio processor initialized")
+                
+                # Initialize Voxtral model if needed
+                if voxtral_model and not voxtral_model.is_initialized:
+                    logger.info("Initializing Voxtral model for TCP server...")
+                    await voxtral_model.initialize()
+                
+                self.initialized = True
+                
+        except Exception as e:
+            logger.error(f"Failed to initialize TCP server components: {e}")
+            raise
     
     async def send_response(self, writer: asyncio.StreamWriter, response_data: Dict[str, Any]):
         """Send response back to TCP client"""
@@ -50,6 +78,10 @@ class TCPStreamingServer:
             length_data = await reader.readexactly(4)
             message_length = struct.unpack('!I', length_data)[0]
             
+            # Validate message length
+            if message_length > 50 * 1024 * 1024:  # 50MB limit
+                raise ValueError(f"Message too large: {message_length} bytes")
+            
             # Read the actual message
             message_data = await reader.readexactly(message_length)
             message_json = message_data.decode('utf-8')
@@ -71,6 +103,14 @@ class TCPStreamingServer:
         try:
             start_time = time.time()
             
+            # Check if components are initialized
+            if not self.initialized or not self.audio_processor or not voxtral_model:
+                await self.send_response(writer, {
+                    "type": "error",
+                    "message": "Server components not initialized"
+                })
+                return
+            
             # Extract audio data
             audio_b64 = data.get("audio_data")
             if not audio_b64:
@@ -81,8 +121,15 @@ class TCPStreamingServer:
                 return
             
             # Decode audio
-            audio_bytes = base64.b64decode(audio_b64)
-            audio_array = np.frombuffer(audio_bytes, dtype=np.float32)
+            try:
+                audio_bytes = base64.b64decode(audio_b64)
+                audio_array = np.frombuffer(audio_bytes, dtype=np.float32)
+            except Exception as e:
+                await self.send_response(writer, {
+                    "type": "error",
+                    "message": f"Audio decoding error: {str(e)}"
+                })
+                return
             
             # Validate and preprocess
             if not self.audio_processor.validate_audio_format(audio_array):
@@ -99,14 +146,19 @@ class TCPStreamingServer:
             prompt = data.get("prompt", "")
             
             # Process with Voxtral
-            if mode == "transcribe":
-                response_text = await voxtral_model.transcribe_audio(audio_tensor)
-            elif mode == "understand":
-                if not prompt:
-                    prompt = "Describe what you hear in this audio."
-                response_text = await voxtral_model.understand_audio(audio_tensor, prompt)
-            else:
-                response_text = await voxtral_model.process_audio_stream(audio_tensor, prompt)
+            try:
+                if mode == "transcribe":
+                    response_text = await voxtral_model.transcribe_audio(audio_tensor)
+                elif mode == "understand":
+                    if not prompt:
+                        prompt = "Describe what you hear in this audio."
+                    response_text = await voxtral_model.understand_audio(audio_tensor, prompt)
+                else:
+                    response_text = await voxtral_model.process_audio_stream(audio_tensor, prompt)
+                    
+            except Exception as e:
+                logger.error(f"Voxtral processing error: {e}")
+                response_text = f"Processing error: {str(e)}"
             
             processing_time = (time.time() - start_time) * 1000
             
@@ -170,7 +222,7 @@ class TCPStreamingServer:
                         })
                         
                     elif msg_type == "status":
-                        model_info = voxtral_model.get_model_info()
+                        model_info = voxtral_model.get_model_info() if voxtral_model else {"status": "not_available"}
                         await self.send_response(writer, {
                             "type": "status",
                             "model_info": model_info,
@@ -194,30 +246,43 @@ class TCPStreamingServer:
             logger.debug(traceback.format_exc())
         finally:
             self.clients.discard(writer)
-            writer.close()
-            await writer.wait_closed()
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except:
+                pass
             logger.info(f"TCP client {client_addr} connection closed")
     
     async def start_server(self):
         """Start the TCP streaming server"""
         logger.info(f"Starting TCP server on {self.host}:{self.port}")
         
-        # Initialize Voxtral model if needed
-        if not voxtral_model.is_initialized:
-            await voxtral_model.initialize()
+        # Initialize components
+        await self.initialize_components()
         
-        # Start TCP server
-        server = await asyncio.start_server(
-            self.handle_client,
-            self.host,
-            self.port
-        )
-        
-        logger.info(f"TCP server running on {self.host}:{self.port}")
-        
-        # Keep server running
-        async with server:
-            await server.serve_forever()
+        try:
+            # Start TCP server
+            server = await asyncio.start_server(
+                self.handle_client,
+                self.host,
+                self.port,
+                reuse_address=True,  # Allow reuse of address
+                reuse_port=True      # Allow reuse of port
+            )
+            
+            logger.info(f"TCP server running on {self.host}:{self.port}")
+            
+            # Keep server running
+            async with server:
+                await server.serve_forever()
+                
+        except OSError as e:
+            if e.errno == 98:  # Address already in use
+                logger.error(f"Port {self.port} is already in use. Please run cleanup.sh first.")
+                raise
+            else:
+                logger.error(f"Failed to start TCP server: {e}")
+                raise
 
 async def main():
     """Main entry point for TCP server"""
