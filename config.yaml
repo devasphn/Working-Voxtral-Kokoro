@@ -1,4 +1,4 @@
-# Configuration for Voxtral Real-time Streaming
+# Configuration for Voxtral Real-time Streaming (FIXED)
 server:
   host: "0.0.0.0"
   http_port: 8000
@@ -21,12 +21,12 @@ audio:
   channels: 1
   frame_duration_ms: 30
   
-# Mel spectrogram configuration matching Voxtral
+# Mel spectrogram configuration matching Voxtral (FIXED)
 spectrogram:
   n_mels: 128
   hop_length: 160
   win_length: 400
-  n_fft: 400
+  n_fft: 512  # FIXED: Increased from 400 to 512 to resolve mel filterbank warning
   
 streaming:
   max_connections: 100
