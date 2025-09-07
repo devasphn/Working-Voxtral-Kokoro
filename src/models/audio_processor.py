@@ -1,6 +1,6 @@
 """
 Audio processing module for Voxtral Real-time Streaming (FIXED)
-Fixed mel filterbank configuration to eliminate warnings
+Fixed tensor writeability and data type issues
 """
 import numpy as np
 import librosa
@@ -46,7 +46,7 @@ class AudioProcessor:
     
     def preprocess_audio(self, audio_data: np.ndarray, sample_rate: Optional[int] = None) -> torch.Tensor:
         """
-        Preprocess audio data for Voxtral model
+        Preprocess audio data for Voxtral model - FIXED tensor writeability
         
         Args:
             audio_data: Raw audio data as numpy array
@@ -56,13 +56,22 @@ class AudioProcessor:
             Preprocessed audio tensor ready for Voxtral
         """
         try:
+            # FIXED: Ensure audio_data is writeable by creating a copy
+            if not audio_data.flags.writeable:
+                audio_data = audio_data.copy()
+            
             # Convert to float32 if needed
             if audio_data.dtype != np.float32:
                 audio_data = audio_data.astype(np.float32)
             
             # Normalize audio to [-1, 1] range
-            if audio_data.max() > 1.0 or audio_data.min() < -1.0:
-                audio_data = audio_data / np.max(np.abs(audio_data))
+            max_val = np.max(np.abs(audio_data))
+            if max_val > 1.0:
+                audio_data = audio_data / max_val
+            elif max_val < 1e-8:  # Very quiet audio
+                logger.warning("Audio signal is very quiet, amplifying...")
+                audio_data = audio_data * 1000.0
+                audio_data = np.clip(audio_data, -1.0, 1.0)
             
             # Resample if necessary
             if sample_rate and sample_rate != self.sample_rate:
@@ -72,13 +81,17 @@ class AudioProcessor:
                     target_sr=self.sample_rate
                 )
             
-            # Convert to tensor
-            audio_tensor = torch.from_numpy(audio_data).float()
+            # FIXED: Create tensor with explicit copy to ensure writeability
+            audio_tensor = torch.from_numpy(audio_data.copy()).float()
             
             # Ensure mono audio
             if len(audio_tensor.shape) > 1:
                 audio_tensor = torch.mean(audio_tensor, dim=0)
             
+            # Ensure tensor is contiguous
+            if not audio_tensor.is_contiguous():
+                audio_tensor = audio_tensor.contiguous()
+                
             return audio_tensor
             
         except Exception as e:
@@ -167,7 +180,7 @@ class AudioProcessor:
     
     def validate_audio_format(self, audio_data: np.ndarray) -> bool:
         """
-        Validate audio format meets requirements
+        Validate audio format meets requirements - FIXED validation logic
         
         Args:
             audio_data: Audio data to validate
@@ -178,21 +191,35 @@ class AudioProcessor:
         try:
             # Check if audio data is not empty
             if len(audio_data) == 0:
+                logger.warning("Audio data is empty")
                 return False
             
             # Check for NaN or infinite values
             if np.any(np.isnan(audio_data)) or np.any(np.isinf(audio_data)):
+                logger.warning("Audio contains NaN or infinite values")
                 return False
             
-            # Check reasonable amplitude range
-            if np.max(np.abs(audio_data)) < 1e-10:
+            # Check reasonable amplitude range - FIXED: More lenient check
+            max_amplitude = np.max(np.abs(audio_data))
+            if max_amplitude < 1e-10:
+                logger.warning(f"Audio signal too quiet: max amplitude {max_amplitude}")
                 return False
+                
+            if max_amplitude > 1000:  # Very loud signal
+                logger.warning(f"Audio signal very loud: max amplitude {max_amplitude}")
+                # Still return True as we can normalize it
             
             # Check for reasonable audio length (at least 0.1 seconds)
             min_samples = int(0.1 * self.sample_rate)
             if len(audio_data) < min_samples:
                 logger.warning(f"Audio too short: {len(audio_data)} samples, minimum: {min_samples}")
                 return False
+                
+            # Check for maximum reasonable length (30 seconds)
+            max_samples = int(30.0 * self.sample_rate)
+            if len(audio_data) > max_samples:
+                logger.warning(f"Audio too long: {len(audio_data)} samples, will be truncated")
+                # Still return True as we can chunk it
                 
             return True
             
