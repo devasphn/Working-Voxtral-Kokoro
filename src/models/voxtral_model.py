@@ -1,6 +1,6 @@
 """
 Voxtral model wrapper for real-time streaming (FIXED)
-Fixed data type conversion issues and audio processing pipeline
+Fixed torch_dtype deprecation and improved initialization
 """
 import torch
 import asyncio
@@ -48,11 +48,11 @@ class VoxtralModel:
                 cache_dir=config.model.cache_dir
             )
             
-            # Load model with optimizations - FIXED: Explicit dtype handling
+            # FIXED: Load model with correct parameter name (dtype instead of torch_dtype)
             self.model = VoxtralForConditionalGeneration.from_pretrained(
                 config.model.name,
                 cache_dir=config.model.cache_dir,
-                torch_dtype=self.torch_dtype,  # Use torch_dtype for consistency
+                dtype=self.torch_dtype,  # FIXED: Use dtype instead of torch_dtype
                 device_map="auto",
                 low_cpu_mem_usage=True,
                 trust_remote_code=True
@@ -116,9 +116,9 @@ class VoxtralModel:
                         
                         # FIXED: Ensure inputs are on correct device with correct dtype
                         if hasattr(inputs, 'to'):
-                            inputs = inputs.to(self.device, dtype=self.torch_dtype)
+                            inputs = inputs.to(self.device)
                         elif isinstance(inputs, dict):
-                            inputs = {k: v.to(self.device, dtype=self.torch_dtype) if hasattr(v, 'to') else v 
+                            inputs = {k: v.to(self.device) if hasattr(v, 'to') else v 
                                     for k, v in inputs.items()}
                         
                         # Generate with minimal tokens for warmup
@@ -190,11 +190,11 @@ class VoxtralModel:
                             return_tensors="pt"
                         )
                         
-                        # FIXED: Explicit dtype conversion to match model
+                        # FIXED: Proper device placement without dtype conflicts
                         if hasattr(inputs, 'to'):
-                            inputs = inputs.to(self.device, dtype=self.torch_dtype)
+                            inputs = inputs.to(self.device)
                         elif isinstance(inputs, dict):
-                            inputs = {k: v.to(self.device, dtype=self.torch_dtype) if hasattr(v, 'to') and v.dtype.is_floating_point else v.to(self.device) if hasattr(v, 'to') else v 
+                            inputs = {k: v.to(self.device) if hasattr(v, 'to') else v 
                                     for k, v in inputs.items()}
                         
                         # Generate response with optimized settings
@@ -239,6 +239,8 @@ class VoxtralModel:
             # Return a more descriptive error message
             if "Index put requires" in str(e):
                 return f"Audio processing error: Data type conversion issue. Please try again."
+            elif "CUDA out of memory" in str(e):
+                return f"GPU memory error: Please try with shorter audio clips."
             else:
                 return f"Audio processing error: {str(e)}"
     
