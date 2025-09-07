@@ -1,6 +1,6 @@
 """
 Audio processing module for Voxtral Real-time Streaming (FIXED)
-Handles log-mel spectrogram generation and audio preprocessing with corrected mel filterbank configuration
+Fixed mel filterbank configuration to eliminate warnings
 """
 import numpy as np
 import librosa
@@ -22,25 +22,24 @@ class AudioProcessor:
         self.win_length = config.spectrogram.win_length
         self.n_fft = config.spectrogram.n_fft
         
-        # FIXED: Adjust n_fft to resolve mel filterbank warning
-        # The warning occurs when n_mels (128) is too high for n_freqs (n_fft//2 + 1)
-        # For 128 mels, we need n_fft >= 512 to get n_freqs >= 257
-        if self.n_fft < 512:
-            self.n_fft = 512
+        # FIXED: Ensure n_fft is sufficient for n_mels
+        min_n_fft = 2 * (self.n_mels - 1)
+        if self.n_fft < min_n_fft:
+            self.n_fft = 1024  # Use 1024 for 128 mel bins
             logger.info(f"Adjusted n_fft to {self.n_fft} to accommodate {self.n_mels} mel bins")
         
         # Initialize mel spectrogram transform (matching Voxtral architecture)
         self.mel_transform = torchaudio.transforms.MelSpectrogram(
             sample_rate=self.sample_rate,
             n_fft=self.n_fft,
-            win_length=self.win_length if self.win_length <= self.n_fft else self.n_fft,
+            win_length=min(self.win_length, self.n_fft),
             hop_length=self.hop_length,
             n_mels=self.n_mels,
             power=2.0,
-            f_min=0.0,  # Add explicit frequency bounds
+            f_min=0.0,
             f_max=self.sample_rate // 2,
-            norm='slaney',  # Use slaney normalization for consistency
-            mel_scale='htk'  # Use HTK mel scale for better compatibility
+            norm='slaney',
+            mel_scale='htk'
         )
         
         logger.info(f"AudioProcessor initialized with sample_rate={self.sample_rate}, n_mels={self.n_mels}, n_fft={self.n_fft}")
@@ -106,7 +105,6 @@ class AudioProcessor:
             mel_spec = self.mel_transform(audio_tensor)
             
             # Convert to log scale (matching Voxtral preprocessing)
-            # Use a slightly larger epsilon to avoid numerical issues
             log_mel_spec = torch.log(mel_spec + 1e-8)
             
             return log_mel_spec.squeeze(0)  # Remove batch dimension
@@ -135,7 +133,7 @@ class AudioProcessor:
                 end_idx = min(start_idx + chunk_samples, len(audio_tensor))
                 chunk = audio_tensor[start_idx:end_idx]
                 
-                # Pad chunk to exact size if needed (Voxtral expects 30-second chunks)
+                # Pad chunk to exact size if needed
                 if len(chunk) < chunk_samples:
                     padding = chunk_samples - len(chunk)
                     chunk = torch.cat([chunk, torch.zeros(padding)])
@@ -156,12 +154,11 @@ class AudioProcessor:
             audio_chunk: Raw audio chunk from stream
             
         Returns:
-            Processed audio tensor ready for model (returns raw audio, not spectrogram)
+            Processed audio tensor ready for model
         """
         try:
             # Just preprocess the chunk - Voxtral will handle spectrogram internally
             audio_tensor = self.preprocess_audio(audio_chunk)
-            
             return audio_tensor
             
         except Exception as e:
@@ -187,7 +184,7 @@ class AudioProcessor:
             if np.any(np.isnan(audio_data)) or np.any(np.isinf(audio_data)):
                 return False
             
-            # Check reasonable amplitude range (allow for silent audio with small values)
+            # Check reasonable amplitude range
             if np.max(np.abs(audio_data)) < 1e-10:
                 return False
             
