@@ -1,6 +1,6 @@
 """
 FastAPI UI server for web interface (FIXED)
-Updated for Pydantic v2 compatibility and modern FastAPI patterns
+Updated for RunPod WebSocket proxy compatibility
 """
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
@@ -27,7 +27,7 @@ if static_path.exists():
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    """Serve the main web interface with improved error handling"""
+    """Serve the main web interface with RunPod WebSocket compatibility"""
     html_content = """
 <!DOCTYPE html>
 <html lang="en">
@@ -163,6 +163,15 @@ async def home(request: Request):
         .disconnected {
             background: #e17055;
         }
+        .url-info {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            border-left: 4px solid #74b9ff;
+        }
     </style>
 </head>
 <body>
@@ -172,6 +181,11 @@ async def home(request: Request):
     
     <div class="container">
         <h1>🎙️ Voxtral Real-time Streaming</h1>
+        
+        <div class="url-info" id="urlInfo">
+            <strong>WebSocket URL:</strong> <span id="wsUrl">Detecting...</span><br>
+            <strong>Environment:</strong> <span id="envInfo">Detecting...</span>
+        </div>
         
         <div class="status" id="status">
             Initializing...
@@ -220,6 +234,40 @@ async def home(request: Request):
         let audioStream = null;
         let audioChunks = [];
         let isRecording = false;
+        let wsUrl = '';
+        
+        // Detect environment and construct WebSocket URL
+        function detectEnvironment() {
+            const hostname = window.location.hostname;
+            const protocol = window.location.protocol;
+            
+            // Check if running on RunPod (contains proxy.runpod.net)
+            if (hostname.includes('proxy.runpod.net')) {
+                // Extract POD_ID from hostname (format: POD_ID-PORT.proxy.runpod.net)
+                const parts = hostname.split('-');
+                if (parts.length >= 2) {
+                    const podId = parts[0];
+                    // Use wss for RunPod proxy with /ws endpoint
+                    wsUrl = `wss://${podId}-8765.proxy.runpod.net/ws`;
+                    document.getElementById('envInfo').textContent = 'RunPod Cloud (Proxy)';
+                } else {
+                    // Fallback
+                    wsUrl = `wss://${hostname}/ws`;
+                    document.getElementById('envInfo').textContent = 'RunPod Cloud (Unknown format)';
+                }
+            } else if (hostname === 'localhost' || hostname === '127.0.0.1') {
+                // Local development
+                wsUrl = `ws://${hostname}:8765`;
+                document.getElementById('envInfo').textContent = 'Local Development';
+            } else {
+                // Other cloud or custom deployment
+                const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
+                wsUrl = `${wsProtocol}//${hostname}:8765`;
+                document.getElementById('envInfo').textContent = 'Custom Deployment';
+            }
+            
+            document.getElementById('wsUrl').textContent = wsUrl;
+        }
         
         function updateStatus(message, type = 'info') {
             const status = document.getElementById('status');
@@ -235,7 +283,7 @@ async def home(request: Request):
         
         async function connect() {
             try {
-                const wsUrl = `ws://${window.location.hostname}:8765`;
+                updateStatus('Attempting to connect...', 'info');
                 ws = new WebSocket(wsUrl);
                 
                 ws.onopen = () => {
@@ -250,8 +298,8 @@ async def home(request: Request):
                     handleWebSocketMessage(data);
                 };
                 
-                ws.onclose = () => {
-                    updateStatus('Disconnected from server');
+                ws.onclose = (event) => {
+                    updateStatus(`Disconnected from server (Code: ${event.code})`, 'error');
                     updateConnectionStatus(false);
                     document.getElementById('connectBtn').disabled = false;
                     document.getElementById('startBtn').disabled = true;
@@ -259,12 +307,14 @@ async def home(request: Request):
                 };
                 
                 ws.onerror = (error) => {
-                    updateStatus('Connection error: ' + error.message, 'error');
+                    updateStatus('Connection error - check console for details', 'error');
                     updateConnectionStatus(false);
+                    console.error('WebSocket error:', error);
                 };
                 
             } catch (error) {
                 updateStatus('Failed to connect: ' + error.message, 'error');
+                console.error('Connection failed:', error);
             }
         }
         
@@ -281,6 +331,9 @@ async def home(request: Request):
                 case 'error':
                     updateStatus('Error: ' + data.message, 'error');
                     break;
+                    
+                default:
+                    console.log('Unknown message type:', data);
             }
         }
         
@@ -301,8 +354,18 @@ async def home(request: Request):
         
         async function startRecording() {
             try {
-                audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                mediaRecorder = new MediaRecorder(audioStream);
+                audioStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true
+                    }
+                });
+                
+                mediaRecorder = new MediaRecorder(audioStream, {
+                    mimeType: 'audio/webm;codecs=opus'
+                });
                 audioChunks = [];
                 
                 mediaRecorder.ondataavailable = (event) => {
@@ -310,7 +373,7 @@ async def home(request: Request):
                 };
                 
                 mediaRecorder.onstop = async () => {
-                    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
                     await sendAudioData(audioBlob);
                 };
                 
@@ -323,6 +386,7 @@ async def home(request: Request):
                 
             } catch (error) {
                 updateStatus('Microphone access denied: ' + error.message, 'error');
+                console.error('Recording error:', error);
             }
         }
         
@@ -334,14 +398,30 @@ async def home(request: Request):
                 document.getElementById('startBtn').disabled = false;
                 document.getElementById('stopBtn').disabled = true;
                 updateStatus('Processing audio...', 'info');
+                
+                // Stop audio stream
+                if (audioStream) {
+                    audioStream.getTracks().forEach(track => track.stop());
+                }
             }
         }
         
         async function sendAudioData(audioBlob) {
             try {
+                // Convert to ArrayBuffer first, then to Float32Array
                 const arrayBuffer = await audioBlob.arrayBuffer();
-                const audioData = new Float32Array(arrayBuffer);
-                const base64Audio = btoa(String.fromCharCode(...new Uint8Array(audioData.buffer)));
+                
+                // Create an audio context to decode the audio
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                    sampleRate: 16000
+                });
+                
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                const float32Array = audioBuffer.getChannelData(0); // Get mono channel
+                
+                // Convert to base64
+                const bytes = new Uint8Array(float32Array.buffer);
+                const base64Audio = btoa(String.fromCharCode(...bytes));
                 
                 const message = {
                     type: 'audio',
@@ -354,11 +434,15 @@ async def home(request: Request):
                 
             } catch (error) {
                 updateStatus('Error sending audio: ' + error.message, 'error');
+                console.error('Audio processing error:', error);
             }
         }
         
-        // Initialize
-        updateStatus('Click Connect to start');
+        // Initialize on page load
+        window.addEventListener('load', () => {
+            detectEnvironment();
+            updateStatus('Click Connect to start');
+        });
     </script>
 </body>
 </html>
@@ -386,6 +470,35 @@ async def api_status():
             "timestamp": time.time(),
             "error": str(e)
         }, status_code=500)
+
+# Add WebSocket endpoint for RunPod proxy compatibility
+@app.websocket("/ws")
+async def websocket_endpoint(websocket):
+    """WebSocket endpoint for RunPod proxy compatibility"""
+    await websocket.accept()
+    
+    try:
+        # Simple echo for now - main WebSocket server handles actual logic
+        await websocket.send_text(json.dumps({
+            "type": "connection",
+            "status": "connected",
+            "message": "Connected via HTTP proxy WebSocket endpoint",
+            "note": "Main WebSocket server running on port 8765"
+        }))
+        
+        while True:
+            data = await websocket.receive_text()
+            message = json.loads(data)
+            
+            # Echo back for testing
+            await websocket.send_text(json.dumps({
+                "type": "echo",
+                "original": message,
+                "message": "This is the HTTP proxy endpoint. Main WebSocket server is on port 8765."
+            }))
+            
+    except Exception as e:
+        logger.error(f"WebSocket proxy error: {e}")
 
 # Updated startup event for FastAPI
 @app.on_event("startup")
