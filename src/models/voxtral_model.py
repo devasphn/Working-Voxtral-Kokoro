@@ -1,6 +1,6 @@
 """
-Voxtral model wrapper for real-time streaming
-Optimized for <200ms latency inference
+Voxtral model wrapper for real-time streaming (FIXED)
+Optimized for <200ms latency inference with proper audio format handling
 """
 import torch
 import asyncio
@@ -9,6 +9,9 @@ from typing import Optional, List, Dict, Any
 from transformers import VoxtralForConditionalGeneration, AutoProcessor
 import logging
 from threading import Lock
+import base64
+from mistral_common.audio import Audio
+from mistral_common.protocol.instruct.messages import AudioChunk, TextChunk, UserMessage
 
 from src.utils.config import config
 from src.models.audio_processor import AudioProcessor
@@ -41,11 +44,11 @@ class VoxtralModel:
                 cache_dir=config.model.cache_dir
             )
             
-            # Load model with optimizations
+            # Load model with optimizations (FIXED: use dtype instead of torch_dtype)
             self.model = VoxtralForConditionalGeneration.from_pretrained(
                 config.model.name,
                 cache_dir=config.model.cache_dir,
-                torch_dtype=self.torch_dtype,
+                dtype=self.torch_dtype,  # FIXED: changed from torch_dtype to dtype
                 device_map="auto",
                 low_cpu_mem_usage=True,
                 trust_remote_code=True
@@ -62,7 +65,7 @@ class VoxtralModel:
                 except Exception as e:
                     logger.warning(f"Could not compile model: {e}")
             
-            # Warm up the model with dummy data
+            # Warm up the model with dummy data (FIXED)
             await self._warmup_model()
             
             self.is_initialized = True
@@ -74,46 +77,67 @@ class VoxtralModel:
             raise
     
     async def _warmup_model(self):
-        """Warm up the model with dummy audio to optimize first inference"""
+        """Warm up the model with dummy audio to optimize first inference (FIXED)"""
         try:
             logger.info("Warming up model...")
             
-            # Create dummy audio (1 second of silence)
-            dummy_audio = torch.zeros(config.audio.sample_rate, dtype=torch.float32)
+            # Create proper dummy audio using mistral_common format
+            import numpy as np
+            import tempfile
+            import soundfile as sf
             
-            # Process dummy audio
-            log_mel_spec = self.audio_processor.generate_log_mel_spectrogram(dummy_audio)
+            # Generate 1 second of dummy audio at 16kHz
+            sample_rate = 16000
+            duration = 1.0
+            dummy_samples = np.sin(2 * np.pi * 440 * np.linspace(0, duration, int(sample_rate * duration)))
+            dummy_samples = dummy_samples.astype(np.float32)
             
-            # Create dummy conversation
-            conversation = [{
-                "role": "user",
-                "content": [
-                    {"type": "audio", "audio": dummy_audio.numpy()},
-                    {"type": "text", "text": "Hello"}
-                ]
-            }]
-            
-            # Run dummy inference
-            with torch.no_grad():
-                inputs = self.processor.apply_chat_template(conversation, return_tensors="pt")
-                inputs = inputs.to(self.device)
+            # Save to temporary file and load with mistral_common
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
+                sf.write(tmp_file.name, dummy_samples, sample_rate)
                 
-                # Generate with minimal tokens for warmup
-                outputs = self.model.generate(
-                    **inputs,
-                    max_new_tokens=10,
-                    do_sample=False,
-                    pad_token_id=self.processor.tokenizer.eos_token_id
-                )
-            
-            logger.info("Model warmup completed")
+                # Load using mistral_common Audio
+                audio = Audio.from_file(tmp_file.name, strict=False)
+                audio_chunk = AudioChunk.from_audio(audio)
+                
+                # Create proper message format
+                text_chunk = TextChunk(text="Hello")
+                user_message = UserMessage(content=[audio_chunk, text_chunk])
+                
+                # Convert to OpenAI format for the processor
+                openai_message = user_message.to_openai()
+                
+                # Run dummy inference with proper format
+                with torch.no_grad():
+                    try:
+                        inputs = self.processor.apply_chat_template(
+                            [openai_message], 
+                            return_tensors="pt"
+                        )
+                        inputs = inputs.to(self.device)
+                        
+                        # Generate with minimal tokens for warmup
+                        outputs = self.model.generate(
+                            **inputs,
+                            max_new_tokens=10,
+                            do_sample=False,
+                            pad_token_id=self.processor.tokenizer.eos_token_id
+                        )
+                        logger.info("Model warmup completed successfully")
+                        
+                    except Exception as warmup_error:
+                        logger.warning(f"Model warmup had issues but continuing: {warmup_error}")
+                
+                # Cleanup temporary file
+                import os
+                os.unlink(tmp_file.name)
             
         except Exception as e:
             logger.warning(f"Model warmup failed: {e}")
     
     async def process_audio_stream(self, audio_data: torch.Tensor, prompt: str = "Transcribe this audio.") -> str:
         """
-        Process streaming audio and return transcription/response
+        Process streaming audio and return transcription/response (FIXED)
         Optimized for <200ms latency
         
         Args:
@@ -130,44 +154,61 @@ class VoxtralModel:
             start_time = time.time()
             
             with self.model_lock:
-                # Create conversation format
-                conversation = [{
-                    "role": "user", 
-                    "content": [
-                        {"type": "audio", "audio": audio_data.numpy()},
-                        {"type": "text", "text": prompt}
-                    ]
-                }]
+                # Convert tensor to proper format for Voxtral (FIXED)
+                import tempfile
+                import soundfile as sf
                 
-                # Process inputs
-                inputs = self.processor.apply_chat_template(
-                    conversation, 
-                    return_tensors="pt"
-                )
-                inputs = inputs.to(self.device, dtype=self.torch_dtype)
+                # Convert tensor to numpy and save as temporary file
+                audio_np = audio_data.numpy()
+                sample_rate = config.audio.sample_rate
                 
-                # Generate response with optimized settings
-                with torch.no_grad():
-                    with torch.autocast(device_type="cuda" if "cuda" in self.device else "cpu"):
-                        outputs = self.model.generate(
-                            **inputs,
-                            max_new_tokens=100,  # Limit for low latency
-                            do_sample=False,  # Greedy decoding for speed
-                            temperature=1.0,
-                            pad_token_id=self.processor.tokenizer.eos_token_id,
-                            use_cache=True  # Use KV cache for speed
-                        )
-                
-                # Decode response
-                response = self.processor.batch_decode(
-                    outputs[:, inputs.input_ids.shape[1]:], 
-                    skip_special_tokens=True
-                )[0]
-                
-                processing_time = time.time() - start_time
-                logger.debug(f"Audio processed in {processing_time*1000:.1f}ms")
-                
-                return response.strip()
+                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
+                    sf.write(tmp_file.name, audio_np, sample_rate)
+                    
+                    # Load using mistral_common Audio
+                    audio = Audio.from_file(tmp_file.name, strict=False)
+                    audio_chunk = AudioChunk.from_audio(audio)
+                    
+                    # Create message format
+                    text_chunk = TextChunk(text=prompt)
+                    user_message = UserMessage(content=[audio_chunk, text_chunk])
+                    
+                    # Convert to OpenAI format
+                    openai_message = user_message.to_openai()
+                    
+                    # Process inputs
+                    inputs = self.processor.apply_chat_template(
+                        [openai_message], 
+                        return_tensors="pt"
+                    )
+                    inputs = inputs.to(self.device, dtype=self.torch_dtype)
+                    
+                    # Generate response with optimized settings
+                    with torch.no_grad():
+                        with torch.autocast(device_type="cuda" if "cuda" in self.device else "cpu"):
+                            outputs = self.model.generate(
+                                **inputs,
+                                max_new_tokens=100,  # Limit for low latency
+                                do_sample=False,  # Greedy decoding for speed
+                                temperature=1.0,
+                                pad_token_id=self.processor.tokenizer.eos_token_id,
+                                use_cache=True  # Use KV cache for speed
+                            )
+                    
+                    # Decode response
+                    response = self.processor.batch_decode(
+                        outputs[:, inputs.input_ids.shape[1]:], 
+                        skip_special_tokens=True
+                    )[0]
+                    
+                    processing_time = time.time() - start_time
+                    logger.debug(f"Audio processed in {processing_time*1000:.1f}ms")
+                    
+                    # Cleanup temporary file
+                    import os
+                    os.unlink(tmp_file.name)
+                    
+                    return response.strip()
                 
         except Exception as e:
             logger.error(f"Error processing audio stream: {e}")
