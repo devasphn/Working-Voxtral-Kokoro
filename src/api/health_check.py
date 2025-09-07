@@ -1,9 +1,10 @@
 """
-Health check API for monitoring server status (FIXED)
-Removed potential conflicts and improved error handling
+FIXED Health check API for monitoring server status
+Resolved deprecation warnings and improved error handling
 """
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+from contextlib import asynccontextmanager
 import uvicorn
 import asyncio
 import time
@@ -11,19 +12,19 @@ import psutil
 import torch
 from typing import Dict, Any
 import logging
+import sys
+import os
+
+# Add current directory to Python path if not already there
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, '..', '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 from src.utils.config import config
 
 # Create separate logger for health check
 health_logger = logging.getLogger("health_check")
-
-# Initialize FastAPI app with minimal configuration
-app = FastAPI(
-    title="Voxtral Streaming Health Check", 
-    version="1.0.0",
-    docs_url=None,  # Disable docs to avoid conflicts
-    redoc_url=None  # Disable redoc to avoid conflicts
-)
 
 # Global variable to track model status (avoid circular imports)
 _model_status = {"initialized": False, "info": {}}
@@ -33,6 +34,24 @@ def update_model_status(status: Dict[str, Any]):
     global _model_status
     _model_status = status
 
+# FIXED: Use lifespan event handler instead of deprecated on_event
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    health_logger.info("Health check server starting...")
+    yield
+    # Shutdown
+    health_logger.info("Health check server shutting down...")
+
+# Initialize FastAPI app with lifespan handler
+app = FastAPI(
+    title="Voxtral Streaming Health Check", 
+    version="1.0.0",
+    docs_url=None,  # Disable docs to avoid conflicts
+    redoc_url=None,  # Disable redoc to avoid conflicts
+    lifespan=lifespan
+)
+
 @app.get("/health")
 async def health_check() -> JSONResponse:
     """Basic health check endpoint"""
@@ -40,7 +59,7 @@ async def health_check() -> JSONResponse:
         "status": "healthy",
         "timestamp": time.time(),
         "service": "voxtral-streaming",
-        "version": "1.0.0"
+        "version": "2.0.0"
     })
 
 @app.get("/status")
@@ -133,20 +152,10 @@ async def ping() -> JSONResponse:
         "timestamp": time.time()
     })
 
-# Startup and shutdown events
-@app.on_event("startup")
-async def startup_event():
-    """Health check startup"""
-    health_logger.info("Health check server starting...")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Health check shutdown"""
-    health_logger.info("Health check server shutting down...")
-
-def main():
-    """Run health check server"""
+# FIXED: Add proper main execution block
+if __name__ == "__main__":
     try:
+        health_logger.info("Starting Health Check Server")
         uvicorn.run(
             app,
             host=config.server.host,
@@ -157,6 +166,3 @@ def main():
     except Exception as e:
         health_logger.error(f"Failed to start health check server: {e}")
         raise
-
-if __name__ == "__main__":
-    main()
