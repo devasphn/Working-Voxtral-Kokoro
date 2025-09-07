@@ -1,6 +1,6 @@
 """
-Enhanced Audio processor for REAL-TIME streaming (FIXED)
-Optimized for continuous chunk processing with comprehensive logging
+FIXED Enhanced Audio processor for REAL-TIME streaming 
+Fixed import paths and optimized for continuous chunk processing
 """
 import numpy as np
 import librosa
@@ -10,6 +10,14 @@ from typing import Tuple, Optional
 import logging
 from collections import deque
 import time
+import sys
+import os
+
+# Add current directory to Python path if not already there
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, '..', '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 from src.utils.config import config
 
@@ -331,3 +339,42 @@ class AudioProcessor:
         except Exception as e:
             audio_logger.error(f"❌ Error chunking audio: {e}")
             raise
+
+# FIXED: Add proper main execution block for testing
+if __name__ == "__main__":
+    """Test audio processor functionality"""
+    print("🧪 Testing Audio Processor...")
+    
+    try:
+        # Initialize processor
+        processor = AudioProcessor()
+        
+        # Test with dummy audio
+        sample_rate = 16000
+        duration = 1.0
+        dummy_audio = np.sin(2 * np.pi * 440 * np.linspace(0, duration, int(sample_rate * duration)))
+        dummy_audio = dummy_audio.astype(np.float32)
+        
+        print(f"📊 Input audio: {len(dummy_audio)} samples, {duration}s")
+        
+        # Test validation
+        is_valid = processor.validate_realtime_chunk(dummy_audio, chunk_id=1)
+        print(f"✅ Validation passed: {is_valid}")
+        
+        # Test preprocessing
+        audio_tensor = processor.preprocess_realtime_chunk(dummy_audio, chunk_id=1)
+        print(f"✅ Preprocessing completed: {audio_tensor.shape}")
+        
+        # Test mel spectrogram generation
+        mel_spec = processor.generate_log_mel_spectrogram(audio_tensor)
+        print(f"✅ Mel spectrogram generated: {mel_spec.shape}")
+        
+        # Test performance stats
+        stats = processor.get_processing_stats()
+        print(f"📊 Processing stats: {stats}")
+        
+        print("🎉 All tests passed!")
+        
+    except Exception as e:
+        print(f"❌ Test failed: {e}")
+        raise
