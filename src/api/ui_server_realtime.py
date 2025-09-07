@@ -1,6 +1,6 @@
 """
-FastAPI UI server with REAL-TIME audio streaming (COMPLETE SOLUTION)
-Fixed to provide TRUE real-time streaming with continuous audio chunks
+FIXED UI server with proper module imports and main execution
+Enhanced for REAL-TIME streaming with corrected import paths
 """
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -13,6 +13,14 @@ import base64
 import numpy as np
 from pathlib import Path
 import logging
+import sys
+import os
+
+# Add current directory to Python path if not already there
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, '..', '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 from src.utils.config import config
 from src.utils.logging_config import logger
@@ -36,7 +44,7 @@ def get_voxtral_model():
     """Lazy initialization of Voxtral model"""
     global _voxtral_model
     if _voxtral_model is None:
-        from src.models.voxtral_model import voxtral_model
+        from src.models.voxtral_model_realtime import voxtral_model
         _voxtral_model = voxtral_model
         streaming_logger.info("Voxtral model lazy-loaded")
     return _voxtral_model
@@ -45,7 +53,7 @@ def get_audio_processor():
     """Lazy initialization of Audio processor"""
     global _audio_processor
     if _audio_processor is None:
-        from src.models.audio_processor import AudioProcessor
+        from src.models.audio_processor_realtime import AudioProcessor
         _audio_processor = AudioProcessor()
         streaming_logger.info("Audio processor lazy-loaded")
     return _audio_processor
@@ -204,9 +212,6 @@ async def home(request: Request):
             font-family: 'Courier New', monospace;
             font-size: 0.9em;
             border-left: 4px solid #74b9ff;
-        }
-        .loading {
-            border-left: 4px solid #f39c12;
         }
         .realtime-indicator {
             display: inline-block;
@@ -839,7 +844,7 @@ async def handle_realtime_audio_chunk(websocket: WebSocket, data: dict, client_i
             return
         
         # Validate audio format
-        if not audio_processor.validate_audio_format(audio_array):
+        if not audio_processor.validate_realtime_chunk(audio_array, chunk_id):
             streaming_logger.warning(f"[REALTIME] Invalid audio format in chunk {chunk_id}")
             await websocket.send_text(json.dumps({
                 "type": "error", 
@@ -849,7 +854,7 @@ async def handle_realtime_audio_chunk(websocket: WebSocket, data: dict, client_i
         
         # Preprocess audio
         try:
-            audio_tensor = audio_processor.preprocess_audio(audio_array)
+            audio_tensor = audio_processor.preprocess_realtime_chunk(audio_array, chunk_id)
             streaming_logger.debug(f"[REALTIME] Preprocessed audio tensor shape: {audio_tensor.shape}")
         except Exception as e:
             streaming_logger.error(f"[REALTIME] Audio preprocessing error for chunk {chunk_id}: {e}")
@@ -905,8 +910,8 @@ async def handle_realtime_audio_chunk(websocket: WebSocket, data: dict, client_i
             "message": f"Chunk processing error: {str(e)}"
         }))
 
-def main():
-    """Run the real-time streaming UI server"""
+# FIXED: Add proper main execution block
+if __name__ == "__main__":
     streaming_logger.info("Starting Voxtral Real-time Streaming UI Server")
     uvicorn.run(
         app,
@@ -914,6 +919,3 @@ def main():
         port=config.server.http_port,
         log_level="info"
     )
-
-if __name__ == "__main__":
-    main()
