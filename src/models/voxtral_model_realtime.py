@@ -1,6 +1,6 @@
 """
-Enhanced Voxtral model wrapper for REAL-TIME streaming (FIXED)
-Added comprehensive logging and optimized for continuous chunk processing
+FIXED Voxtral model wrapper for REAL-TIME streaming 
+Fixed import paths and added proper main execution block
 """
 import torch
 import asyncio
@@ -17,9 +17,15 @@ import soundfile as sf
 import numpy as np
 import os
 from collections import deque
+import sys
+
+# Add current directory to Python path if not already there
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, '..', '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 from src.utils.config import config
-from src.models.audio_processor import AudioProcessor
 
 # Enhanced logging for real-time streaming
 realtime_logger = logging.getLogger("voxtral_realtime")
@@ -31,7 +37,7 @@ class VoxtralModel:
     def __init__(self):
         self.model = None
         self.processor = None
-        self.audio_processor = AudioProcessor()
+        self.audio_processor = None  # Will be lazy-loaded
         self.model_lock = Lock()
         self.is_initialized = False
         
@@ -44,6 +50,14 @@ class VoxtralModel:
         self.torch_dtype = getattr(torch, config.model.torch_dtype)
         
         realtime_logger.info(f"VoxtralModel initialized for {self.device} with {self.torch_dtype}")
+        
+    def get_audio_processor(self):
+        """Lazy initialization of Audio processor"""
+        if self.audio_processor is None:
+            from src.models.audio_processor_realtime import AudioProcessor
+            self.audio_processor = AudioProcessor()
+            realtime_logger.info("Audio processor lazy-loaded into Voxtral model")
+        return self.audio_processor
         
     async def initialize(self):
         """Initialize the Voxtral model with real-time optimizations"""
@@ -405,3 +419,27 @@ class VoxtralModel:
 
 # Global model instance for real-time streaming
 voxtral_model = VoxtralModel()
+
+# FIXED: Add proper main execution block for testing
+if __name__ == "__main__":
+    import asyncio
+    
+    async def test_model():
+        """Test model initialization and basic functionality"""
+        print("🧪 Testing Voxtral Real-time Model...")
+        
+        try:
+            # Initialize model
+            await voxtral_model.initialize()
+            
+            # Test with dummy audio
+            dummy_audio = torch.randn(16000)  # 1 second of dummy audio
+            result = await voxtral_model.transcribe_audio(dummy_audio)
+            
+            print(f"✅ Test completed successfully")
+            print(f"📊 Model info: {voxtral_model.get_model_info()}")
+            
+        except Exception as e:
+            print(f"❌ Test failed: {e}")
+    
+    asyncio.run(test_model())
