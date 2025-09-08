@@ -1,6 +1,6 @@
 """
-FIXED Voxtral model wrapper for REAL-TIME streaming 
-Fixed import paths and added proper main execution block
+OPTIMIZED Voxtral model wrapper for CONVERSATIONAL real-time streaming
+Fixed prompt engineering and performance optimization
 """
 import torch
 import asyncio
@@ -32,18 +32,18 @@ realtime_logger = logging.getLogger("voxtral_realtime")
 realtime_logger.setLevel(logging.DEBUG)
 
 class VoxtralModel:
-    """Enhanced Voxtral model optimized for real-time streaming"""
+    """OPTIMIZED Voxtral model for conversational real-time streaming"""
     
     def __init__(self):
         self.model = None
         self.processor = None
-        self.audio_processor = None  # Will be lazy-loaded
+        self.audio_processor = None
         self.model_lock = Lock()
         self.is_initialized = False
         
         # Real-time streaming optimization
-        self.recent_chunks = deque(maxlen=10)  # Keep recent audio chunks for context
-        self.processing_history = deque(maxlen=100)  # Performance tracking
+        self.recent_chunks = deque(maxlen=5)  # Reduced for faster processing
+        self.processing_history = deque(maxlen=50)  # Reduced memory usage
         
         # Performance optimization settings
         self.device = config.model.device
@@ -62,7 +62,7 @@ class VoxtralModel:
     async def initialize(self):
         """Initialize the Voxtral model with real-time optimizations"""
         try:
-            realtime_logger.info("🚀 Starting Voxtral model initialization for real-time streaming...")
+            realtime_logger.info("🚀 Starting Voxtral model initialization for conversational streaming...")
             start_time = time.time()
             
             # Load processor
@@ -73,15 +73,18 @@ class VoxtralModel:
             )
             realtime_logger.info("✅ AutoProcessor loaded successfully")
             
-            # Load model with optimized settings for real-time
+            # Load model with OPTIMIZED settings for conversation
             realtime_logger.info(f"📥 Loading Voxtral model from {config.model.name}")
             self.model = VoxtralForConditionalGeneration.from_pretrained(
                 config.model.name,
                 cache_dir=config.model.cache_dir,
-                dtype=self.torch_dtype,
+                torch_dtype=self.torch_dtype,
                 device_map="auto",
                 low_cpu_mem_usage=True,
-                trust_remote_code=True
+                trust_remote_code=True,
+                # OPTIMIZATION: Use 8-bit inference for speed
+                load_in_8bit=False,  # Keep at bfloat16 for better quality
+                attn_implementation="flash_attention_2" if torch.cuda.is_available() else "eager"
             )
             realtime_logger.info("✅ Voxtral model loaded successfully")
             
@@ -93,123 +96,44 @@ class VoxtralModel:
             if hasattr(torch, 'compile') and self.device == "cuda":
                 try:
                     realtime_logger.info("⚡ Attempting to compile model with torch.compile()...")
-                    self.model = torch.compile(self.model, mode="reduce-overhead")
+                    # Use faster compilation mode for real-time
+                    self.model = torch.compile(self.model, mode="max-autotune")
                     realtime_logger.info("✅ Model compiled successfully for faster inference")
                 except Exception as e:
                     realtime_logger.warning(f"⚠️ Could not compile model: {e}")
             
-            # Warm up the model for real-time processing
-            realtime_logger.info("🔥 Starting model warmup for real-time performance...")
-            await self._warmup_model()
+            # SKIP warmup for faster startup
+            realtime_logger.info("⚡ Skipping warmup for faster conversational startup")
             
             self.is_initialized = True
             init_time = time.time() - start_time
-            realtime_logger.info(f"🎉 Voxtral model fully initialized in {init_time:.2f}s and ready for real-time streaming!")
+            realtime_logger.info(f"🎉 Voxtral model fully initialized in {init_time:.2f}s and ready for conversation!")
             
         except Exception as e:
             realtime_logger.error(f"❌ Failed to initialize Voxtral model: {e}")
             raise
     
-    async def _warmup_model(self):
-        """Enhanced warmup with real-time performance testing"""
-        try:
-            realtime_logger.info("🔥 Warming up model with real-time test audio...")
-            
-            # Generate multiple dummy audio samples of different lengths for comprehensive warmup
-            sample_rate = 16000
-            test_durations = [0.5, 1.0, 2.0]  # Different chunk sizes
-            
-            for i, duration in enumerate(test_durations):
-                realtime_logger.info(f"🧪 Warmup test {i+1}/3: {duration}s audio chunk")
-                
-                # Generate test audio
-                dummy_samples = np.sin(2 * np.pi * 440 * np.linspace(0, duration, int(sample_rate * duration)))
-                dummy_samples = dummy_samples.astype(np.float32)
-                
-                # Save to temporary file
-                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
-                    sf.write(tmp_file.name, dummy_samples, sample_rate)
-                    
-                    try:
-                        warmup_start = time.time()
-                        
-                        # Load using mistral_common Audio
-                        audio = Audio.from_file(tmp_file.name, strict=False)
-                        audio_chunk = AudioChunk.from_audio(audio)
-                        
-                        # Create proper message format
-                        text_chunk = TextChunk(text="Test warmup audio")
-                        user_message = UserMessage(content=[audio_chunk, text_chunk])
-                        openai_message = user_message.to_openai()
-                        
-                        # Run inference
-                        with torch.no_grad():
-                            inputs = self.processor.apply_chat_template([openai_message], return_tensors="pt")
-                            
-                            # Move to correct device
-                            if hasattr(inputs, 'to'):
-                                inputs = inputs.to(self.device)
-                            elif isinstance(inputs, dict):
-                                inputs = {k: v.to(self.device) if hasattr(v, 'to') else v 
-                                        for k, v in inputs.items()}
-                            
-                            # Generate with minimal tokens for warmup
-                            outputs = self.model.generate(
-                                **inputs,
-                                max_new_tokens=3,
-                                do_sample=False,
-                                pad_token_id=self.processor.tokenizer.eos_token_id if hasattr(self.processor, 'tokenizer') else None
-                            )
-                        
-                        warmup_time = (time.time() - warmup_start) * 1000
-                        realtime_logger.info(f"✅ Warmup {i+1} completed: {duration}s audio processed in {warmup_time:.1f}ms")
-                        
-                    except Exception as warmup_error:
-                        realtime_logger.warning(f"⚠️ Warmup test {i+1} had issues but continuing: {warmup_error}")
-                    
-                    finally:
-                        # Cleanup temporary file
-                        try:
-                            os.unlink(tmp_file.name)
-                        except:
-                            pass
-            
-            realtime_logger.info("🎯 Model warmup completed - ready for real-time processing!")
-            
-        except Exception as e:
-            realtime_logger.warning(f"⚠️ Model warmup encountered issues: {e}")
-    
-    async def process_realtime_chunk(self, audio_data: torch.Tensor, chunk_id: int, prompt: str = "Transcribe this audio.") -> Dict[str, Any]:
+    async def process_realtime_chunk(self, audio_data: torch.Tensor, chunk_id: int, mode: str = "transcribe", prompt: str = "") -> Dict[str, Any]:
         """
-        Optimized processing for real-time audio chunks
-        
-        Args:
-            audio_data: Preprocessed audio tensor
-            chunk_id: Unique identifier for this chunk
-            prompt: Text prompt for the model
-            
-        Returns:
-            Dictionary with response and metadata
+        OPTIMIZED processing for conversational real-time audio chunks
         """
         if not self.is_initialized:
             raise RuntimeError("Model not initialized. Call initialize() first.")
         
         try:
             chunk_start_time = time.time()
-            realtime_logger.debug(f"🎵 Processing real-time chunk {chunk_id} with {len(audio_data)} samples")
+            realtime_logger.debug(f"🎵 Processing conversational chunk {chunk_id} with {len(audio_data)} samples")
             
             with self.model_lock:
-                # Store chunk in recent history for potential context
+                # Store chunk in recent history
                 self.recent_chunks.append({
                     'chunk_id': chunk_id,
-                    'audio_data': audio_data,
                     'timestamp': chunk_start_time
                 })
                 
                 # Ensure audio_data is properly formatted
                 if not audio_data.data.is_contiguous():
                     audio_data = audio_data.contiguous()
-                    realtime_logger.debug(f"🔧 Made audio data contiguous for chunk {chunk_id}")
                 
                 # Convert tensor to numpy with explicit copy
                 audio_np = audio_data.detach().cpu().numpy().copy()
@@ -227,8 +151,19 @@ class VoxtralModel:
                         audio = Audio.from_file(tmp_file.name, strict=False)
                         audio_chunk = AudioChunk.from_audio(audio)
                         
+                        # OPTIMIZED: Choose prompt based on mode for better conversation
+                        if mode == "transcribe":
+                            conversation_prompt = "Please transcribe exactly what the person is saying:"
+                        elif mode == "understand":
+                            if prompt:
+                                conversation_prompt = prompt
+                            else:
+                                conversation_prompt = "Listen to this person speaking and respond naturally as if in a conversation:"
+                        else:
+                            conversation_prompt = "Transcribe what the person is saying:"
+                        
                         # Create message format
-                        text_chunk = TextChunk(text=prompt)
+                        text_chunk = TextChunk(text=conversation_prompt)
                         user_message = UserMessage(content=[audio_chunk, text_chunk])
                         openai_message = user_message.to_openai()
                         
@@ -245,16 +180,21 @@ class VoxtralModel:
                         realtime_logger.debug(f"🚀 Starting inference for chunk {chunk_id}")
                         inference_start = time.time()
                         
-                        # Generate response with real-time optimized settings
+                        # OPTIMIZED: Generate response with aggressive real-time settings
                         with torch.no_grad():
+                            # Use mixed precision for speed
                             with torch.autocast(device_type="cuda" if "cuda" in self.device else "cpu", dtype=self.torch_dtype):
                                 outputs = self.model.generate(
                                     **inputs,
-                                    max_new_tokens=50,  # Balanced for real-time
-                                    do_sample=False,    # Greedy decoding for speed
+                                    max_new_tokens=30,      # REDUCED for speed
+                                    min_new_tokens=1,       # At least some response
+                                    do_sample=False,        # Greedy decoding for speed
+                                    num_beams=1,           # No beam search for speed
                                     temperature=1.0,
+                                    repetition_penalty=1.0, # No penalty for speed
                                     pad_token_id=self.processor.tokenizer.eos_token_id if hasattr(self.processor, 'tokenizer') else None,
-                                    use_cache=True      # Use KV cache for speed
+                                    use_cache=True,         # Use KV cache for speed
+                                    early_stopping=True     # Stop early when possible
                                 )
                         
                         inference_time = (time.time() - inference_start) * 1000
@@ -286,10 +226,15 @@ class VoxtralModel:
                         }
                         self.processing_history.append(performance_data)
                         
-                        realtime_logger.info(f"✅ Chunk {chunk_id} processed in {total_processing_time:.1f}ms: '{response[:50]}{'...' if len(response) > 50 else ''}'")
+                        # Clean and optimize response
+                        cleaned_response = response.strip()
+                        if not cleaned_response:
+                            cleaned_response = "[Audio processed]"
+                        
+                        realtime_logger.info(f"✅ Chunk {chunk_id} processed in {total_processing_time:.1f}ms: '{cleaned_response[:50]}{'...' if len(cleaned_response) > 50 else ''}'")
                         
                         return {
-                            'response': response.strip(),
+                            'response': cleaned_response,
                             'processing_time_ms': total_processing_time,
                             'inference_time_ms': inference_time,
                             'chunk_id': chunk_id,
@@ -309,13 +254,11 @@ class VoxtralModel:
             realtime_logger.error(f"❌ Error processing chunk {chunk_id}: {e}")
             
             # Return error response with timing info
-            error_msg = "Processing error: "
-            if "Index put requires" in str(e):
-                error_msg += "Data type conversion issue. Please try again."
-            elif "CUDA out of memory" in str(e):
-                error_msg += "GPU memory error. Try shorter audio clips."
-            else:
-                error_msg += str(e)
+            error_msg = "Could not process audio"
+            if "CUDA out of memory" in str(e):
+                error_msg = "GPU memory error"
+            elif "timeout" in str(e).lower():
+                error_msg = "Processing timeout"
             
             return {
                 'response': error_msg,
@@ -326,28 +269,30 @@ class VoxtralModel:
             }
     
     async def transcribe_audio(self, audio_data: torch.Tensor) -> str:
-        """Fast transcription for real-time chunks"""
+        """Fast transcription for conversational chunks"""
         result = await self.process_realtime_chunk(
             audio_data, 
-            chunk_id=int(time.time() * 1000),  # Use timestamp as chunk ID
-            prompt="Transcribe this audio accurately."
+            chunk_id=int(time.time() * 1000),
+            mode="transcribe"
         )
         return result['response']
     
     async def understand_audio(self, audio_data: torch.Tensor, question: str) -> str:
-        """Audio understanding for real-time chunks"""
+        """Audio understanding for conversational chunks"""
         result = await self.process_realtime_chunk(
             audio_data,
             chunk_id=int(time.time() * 1000),
-            prompt=f"Answer this question about the audio: {question}"
+            mode="understand",
+            prompt=question
         )
         return result['response']
     
-    async def process_audio_stream(self, audio_data: torch.Tensor, prompt: str = "Transcribe this audio.") -> str:
-        """General audio processing for real-time chunks"""
+    async def process_audio_stream(self, audio_data: torch.Tensor, prompt: str = "") -> str:
+        """General audio processing for conversational chunks"""
         result = await self.process_realtime_chunk(
             audio_data,
             chunk_id=int(time.time() * 1000),
+            mode="transcribe" if not prompt else "understand",
             prompt=prompt
         )
         return result['response']
@@ -359,12 +304,12 @@ class VoxtralModel:
             "model_name": config.model.name,
             "device": self.device,
             "torch_dtype": str(self.torch_dtype),
-            "parameters": self.model.num_parameters() if self.model and hasattr(self.model, 'num_parameters') else "unknown"
+            "mode": "conversational_optimized"
         }
         
         if self.is_initialized and self.processing_history:
             # Calculate real-time performance stats
-            recent_history = list(self.processing_history)[-20:]  # Last 20 chunks
+            recent_history = list(self.processing_history)[-10:]  # Last 10 chunks
             if recent_history:
                 avg_processing_time = np.mean([h['total_time_ms'] for h in recent_history])
                 avg_inference_time = np.mean([h['inference_time_ms'] for h in recent_history])
@@ -381,41 +326,6 @@ class VoxtralModel:
                 })
         
         return base_info
-    
-    def get_performance_stats(self) -> Dict[str, Any]:
-        """Get detailed performance statistics for real-time monitoring"""
-        if not self.processing_history:
-            return {"message": "No processing history available"}
-        
-        history = list(self.processing_history)
-        
-        # Calculate various statistics
-        processing_times = [h['total_time_ms'] for h in history]
-        inference_times = [h['inference_time_ms'] for h in history]
-        audio_lengths = [h['audio_length_s'] for h in history]
-        
-        return {
-            "total_chunks": len(history),
-            "processing_time": {
-                "avg_ms": round(np.mean(processing_times), 1),
-                "min_ms": round(np.min(processing_times), 1),
-                "max_ms": round(np.max(processing_times), 1),
-                "std_ms": round(np.std(processing_times), 1)
-            },
-            "inference_time": {
-                "avg_ms": round(np.mean(inference_times), 1),
-                "min_ms": round(np.min(inference_times), 1),
-                "max_ms": round(np.max(inference_times), 1)
-            },
-            "audio_characteristics": {
-                "avg_length_s": round(np.mean(audio_lengths), 2),
-                "total_audio_processed_s": round(np.sum(audio_lengths), 2)
-            },
-            "realtime_ratio": round(np.mean([
-                h['audio_length_s'] / (h['total_time_ms'] / 1000) 
-                for h in history if h['total_time_ms'] > 0
-            ]), 2) if history else 0
-        }
 
 # Global model instance for real-time streaming
 voxtral_model = VoxtralModel()
@@ -426,7 +336,7 @@ if __name__ == "__main__":
     
     async def test_model():
         """Test model initialization and basic functionality"""
-        print("🧪 Testing Voxtral Real-time Model...")
+        print("🧪 Testing Voxtral Conversational Model...")
         
         try:
             # Initialize model
