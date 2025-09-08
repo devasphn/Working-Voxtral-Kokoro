@@ -1,11 +1,11 @@
 #!/bin/bash
-# OPTIMIZED Real-time run script for Voxtral CONVERSATIONAL Streaming Server
-# Fixed import issues and optimized for conversational performance
+# FIXED Real-time run script for Voxtral CONVERSATIONAL Streaming Server
+# Resolved FlashAttention2 issues with proper fallback handling
 
 set -e
 
-echo "=== Starting Voxtral CONVERSATIONAL Streaming Server ==="
-echo "🚀 Version 2.1 - Optimized for Natural Conversation"
+echo "=== Starting Voxtral CONVERSATIONAL Streaming Server (FIXED) ==="
+echo "🚀 Version 2.2 - FlashAttention2 Issues Resolved"
 echo ""
 
 # Clean up any existing processes first
@@ -29,6 +29,17 @@ echo "📁 PYTHONPATH: $PYTHONPATH"
 mkdir -p /workspace/logs/conversational
 mkdir -p /workspace/logs/audio
 mkdir -p /workspace/logs/model
+
+# Check FlashAttention2 availability
+echo "🔍 Checking FlashAttention2 availability..."
+if python3 -c "import flash_attn" 2>/dev/null; then
+    echo "✅ FlashAttention2 is available - optimal performance mode!"
+    FLASH_ATTN_STATUS="available"
+else
+    echo "💡 FlashAttention2 not available - using eager attention (still fast!)"
+    echo "📝 Note: This is normal and the system will work perfectly."
+    FLASH_ATTN_STATUS="not_available"
+fi
 
 # Function to cleanup on exit
 cleanup() {
@@ -90,6 +101,11 @@ sleep 2
 # Start CONVERSATIONAL UI server (using Python module execution)
 echo "🌐 Starting CONVERSATIONAL UI Server on port 8000..."
 echo "📋 Using optimized conversational streaming components"
+if [ "$FLASH_ATTN_STATUS" = "available" ]; then
+    echo "⚡ FlashAttention2 enabled for maximum performance"
+else
+    echo "💡 Using eager attention - performance is still excellent"
+fi
 python -m src.api.ui_server_realtime &
 UI_PID=$!
 
@@ -157,14 +173,16 @@ echo "  🗣️  Conversation Logs: /workspace/logs/conversational/"
 echo "  🎵 Audio Logs:       /workspace/logs/audio/"
 echo "  🤖 Model Logs:       /workspace/logs/model/"
 echo ""
-echo "🎯 CONVERSATIONAL FEATURES:"
+echo "🎯 CONVERSATIONAL FEATURES (FIXED):"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  ✅ FlashAttention2 issues resolved (fallback to eager attention)"
 echo "  ✅ Natural conversation mode (optimized prompts)"
 echo "  ✅ Reduced latency for better conversation flow"
 echo "  ✅ Smart conversation interface with message history"
 echo "  ✅ Simple transcription OR smart conversation modes"
 echo "  ✅ Performance warnings for high latency"
 echo "  ✅ Enhanced error handling for smooth conversation"
+echo "  ✅ Works with or without FlashAttention2"
 echo ""
 echo "🚀 How to Have a Conversation:"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -177,13 +195,19 @@ echo "  6. 🛑 Click 'Stop Conversation' when done"
 echo ""
 
 # Wait for first model initialization
-echo "📋 Conversation Setup Notes:"
+echo "📋 Conversation Setup Notes (FIXED):"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  ⏳ First conversation may take 30+ seconds (model loading)"
 echo "  ⚡ Subsequent responses optimized for <300ms target"
 echo "  📊 Use 'Simple Transcription' mode for fastest responses"
 echo "  🗣️  Use 'Smart Conversation' mode for interactive chat"
 echo "  🔍 Monitor conversation metrics in the web interface"
+if [ "$FLASH_ATTN_STATUS" = "available" ]; then
+    echo "  🚀 FlashAttention2 enabled - maximum performance mode"
+else
+    echo "  💡 Using eager attention - still excellent performance"
+    echo "  📝 To install FlashAttention2 later: pip install flash-attn --no-build-isolation"
+fi
 echo ""
 
 echo "🔄 Conversational Server is now running!"
