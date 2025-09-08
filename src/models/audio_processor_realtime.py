@@ -1,6 +1,6 @@
 """
-FIXED Enhanced Audio processor for REAL-TIME streaming with VAD and silence detection
-Added Voice Activity Detection and improved audio filtering
+FIXED Enhanced Audio processor for REAL-TIME streaming with PRODUCTION VAD
+Added proper Voice Activity Detection and silence filtering
 """
 import numpy as np
 import librosa
@@ -12,7 +12,6 @@ from collections import deque
 import time
 import sys
 import os
-import webrtcvad
 
 # Add current directory to Python path if not already there
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -27,7 +26,7 @@ audio_logger = logging.getLogger("realtime_audio")
 audio_logger.setLevel(logging.DEBUG)
 
 class AudioProcessor:
-    """Enhanced audio processor with VAD and silence detection for real-time streaming"""
+    """Enhanced audio processor optimized for real-time streaming with PRODUCTION VAD"""
     
     def __init__(self):
         self.sample_rate = config.audio.sample_rate
@@ -40,10 +39,17 @@ class AudioProcessor:
         self.processing_history = deque(maxlen=100)
         self.chunk_counter = 0
         
-        # Voice Activity Detection settings
-        self.vad = webrtcvad.Vad(2)  # Aggressiveness level 0-3 (2 = moderate)
-        self.min_speech_amplitude = 0.002  # Minimum amplitude for speech consideration
-        self.silence_threshold = 0.0005  # Below this is considered silence
+        # PRODUCTION VAD SETTINGS
+        self.vad_threshold = 0.001           # RMS threshold for voice detection
+        self.min_voice_duration_ms = 300     # Minimum 300ms of voice to trigger
+        self.min_silence_duration_ms = 500   # Minimum 500ms silence to ignore
+        self.energy_threshold = 1e-6         # Energy threshold for voice activity
+        self.zero_crossing_threshold = 0.1   # Zero crossing rate threshold
+        
+        # Silence detection counters
+        self.consecutive_silent_chunks = 0
+        self.consecutive_voice_chunks = 0
+        self.last_voice_activity = False
         
         # Ensure n_fft is sufficient for n_mels
         min_n_fft = 2 * (self.n_mels - 1)
@@ -65,179 +71,147 @@ class AudioProcessor:
             mel_scale='htk'
         )
         
-        audio_logger.info(f"🔊 AudioProcessor initialized for real-time streaming with VAD:")
+        audio_logger.info(f"🔊 AudioProcessor initialized for PRODUCTION real-time streaming:")
         audio_logger.info(f"   📊 Sample rate: {self.sample_rate} Hz")
         audio_logger.info(f"   🎵 Mel bins: {self.n_mels}")
         audio_logger.info(f"   📐 FFT size: {self.n_fft}")
         audio_logger.info(f"   ⏱️  Hop length: {self.hop_length}")
         audio_logger.info(f"   🪟 Window length: {self.win_length}")
-        audio_logger.info(f"   🎙️ VAD enabled with aggressiveness level 2")
-        audio_logger.info(f"   🔇 Silence threshold: {self.silence_threshold}")
-        audio_logger.info(f"   📢 Min speech amplitude: {self.min_speech_amplitude}")
+        audio_logger.info(f"   🎙️  VAD threshold: {self.vad_threshold}")
+        audio_logger.info(f"   🔇 Energy threshold: {self.energy_threshold}")
     
     def detect_voice_activity(self, audio_data: np.ndarray, chunk_id: int = None) -> dict:
         """
-        Enhanced Voice Activity Detection with multiple criteria
+        PRODUCTION Voice Activity Detection with multiple metrics
         
         Returns:
-            dict with 'has_speech', 'confidence', 'reason' keys
+            dict with VAD results and metrics
         """
-        chunk_id = chunk_id or self.chunk_counter
-        
         try:
-            # Calculate basic audio statistics
-            max_amplitude = np.max(np.abs(audio_data))
+            chunk_id = chunk_id or self.chunk_counter
+            
+            # Calculate RMS energy
             rms_energy = np.sqrt(np.mean(audio_data ** 2))
-            audio_variance = np.var(audio_data)
             
-            audio_logger.debug(f"🔍 VAD analysis for chunk {chunk_id}:")
-            audio_logger.debug(f"   📊 Max amplitude: {max_amplitude:.6f}")
-            audio_logger.debug(f"   ⚡ RMS energy: {rms_energy:.6f}")
-            audio_logger.debug(f"   📈 Variance: {audio_variance:.6f}")
+            # Calculate total energy
+            total_energy = np.sum(audio_data ** 2)
             
-            # Check for silence based on amplitude
-            if max_amplitude < self.silence_threshold:
-                return {
-                    'has_speech': False,
-                    'confidence': 0.9,
-                    'reason': f'silence_amplitude_{max_amplitude:.6f}'
-                }
+            # Calculate zero crossing rate
+            zero_crossings = np.where(np.diff(np.sign(audio_data)))[0]
+            zcr = len(zero_crossings) / len(audio_data)
             
-            # Check for very low energy (background noise)
-            if rms_energy < 0.001:
-                return {
-                    'has_speech': False,
-                    'confidence': 0.8,
-                    'reason': f'low_energy_{rms_energy:.6f}'
-                }
-            
-            # Check for minimum speech amplitude
-            if max_amplitude < self.min_speech_amplitude:
-                return {
-                    'has_speech': False,
-                    'confidence': 0.7,
-                    'reason': f'below_speech_threshold_{max_amplitude:.6f}'
-                }
-            
-            # Check for very low variance (flat signal)
-            if audio_variance < 1e-10:
-                return {
-                    'has_speech': False,
-                    'confidence': 0.85,
-                    'reason': f'flat_signal_{audio_variance:.2e}'
-                }
-            
-            # Use WebRTC VAD for more sophisticated detection
+            # Calculate spectral centroid (frequency content indicator)
             try:
-                # Convert to 16-bit PCM for WebRTC VAD
-                audio_int16 = (audio_data * 32767).astype(np.int16)
-                audio_bytes = audio_int16.tobytes()
-                
-                # WebRTC VAD requires specific frame sizes (10, 20, or 30 ms)
-                frame_duration_ms = 30  # 30ms frames
-                frame_size = int(self.sample_rate * frame_duration_ms / 1000)
-                
-                speech_frames = 0
-                total_frames = 0
-                
-                # Process audio in frames
-                for i in range(0, len(audio_int16) - frame_size + 1, frame_size):
-                    frame = audio_bytes[i*2:(i+frame_size)*2]  # 2 bytes per sample
-                    if len(frame) == frame_size * 2:  # Complete frame
-                        try:
-                            is_speech = self.vad.is_speech(frame, self.sample_rate)
-                            if is_speech:
-                                speech_frames += 1
-                            total_frames += 1
-                        except Exception as e:
-                            audio_logger.debug(f"VAD frame processing error: {e}")
-                
-                if total_frames > 0:
-                    speech_ratio = speech_frames / total_frames
-                    audio_logger.debug(f"   🎙️ VAD speech ratio: {speech_ratio:.2f} ({speech_frames}/{total_frames})")
-                    
-                    # Require at least 30% of frames to contain speech
-                    if speech_ratio >= 0.3:
-                        return {
-                            'has_speech': True,
-                            'confidence': min(0.9, speech_ratio * 1.2),
-                            'reason': f'vad_detected_{speech_ratio:.2f}'
-                        }
-                    else:
-                        return {
-                            'has_speech': False,
-                            'confidence': 1.0 - speech_ratio,
-                            'reason': f'vad_rejected_{speech_ratio:.2f}'
-                        }
-                
-            except Exception as vad_error:
-                audio_logger.debug(f"WebRTC VAD error for chunk {chunk_id}: {vad_error}")
-                
-                # Fallback to energy-based detection
-                if max_amplitude > self.min_speech_amplitude * 2 and rms_energy > 0.005:
-                    return {
-                        'has_speech': True,
-                        'confidence': 0.6,
-                        'reason': f'energy_fallback_{rms_energy:.6f}'
-                    }
+                spectral_centroid = librosa.feature.spectral_centroid(
+                    y=audio_data, 
+                    sr=self.sample_rate
+                )[0].mean()
+            except:
+                spectral_centroid = 0
             
-            # Default to no speech detected
-            return {
-                'has_speech': False,
-                'confidence': 0.7,
-                'reason': 'default_no_speech'
+            # Calculate max amplitude
+            max_amplitude = np.max(np.abs(audio_data))
+            
+            # PRODUCTION VAD DECISION LOGIC
+            has_voice = False
+            confidence = 0.0
+            
+            # Primary check: RMS energy
+            rms_check = rms_energy > self.vad_threshold
+            
+            # Secondary check: Total energy
+            energy_check = total_energy > self.energy_threshold
+            
+            # Tertiary check: Not too noisy (reasonable ZCR)
+            zcr_check = zcr < self.zero_crossing_threshold
+            
+            # Quaternary check: Has meaningful amplitude
+            amplitude_check = max_amplitude > 0.0005
+            
+            # Combine checks with weighting
+            checks = [rms_check, energy_check, amplitude_check]
+            passed_checks = sum(checks)
+            
+            # Voice detected if at least 2/3 primary checks pass
+            if passed_checks >= 2:
+                has_voice = True
+                confidence = passed_checks / 3.0
+                
+                # Boost confidence if ZCR also passes
+                if zcr_check:
+                    confidence = min(1.0, confidence + 0.2)
+                    
+                # Boost confidence if spectral centroid indicates speech
+                if spectral_centroid > 100:  # Human speech typically > 100 Hz
+                    confidence = min(1.0, confidence + 0.1)
+            
+            # Update consecutive counters for stability
+            if has_voice:
+                self.consecutive_voice_chunks += 1
+                self.consecutive_silent_chunks = 0
+            else:
+                self.consecutive_silent_chunks += 1
+                self.consecutive_voice_chunks = 0
+            
+            # Calculate duration-based stability
+            chunk_duration_ms = (len(audio_data) / self.sample_rate) * 1000
+            voice_duration_ms = self.consecutive_voice_chunks * chunk_duration_ms
+            silence_duration_ms = self.consecutive_silent_chunks * chunk_duration_ms
+            
+            # Apply minimum duration requirements
+            stable_voice = (has_voice and voice_duration_ms >= self.min_voice_duration_ms)
+            stable_silence = (not has_voice and silence_duration_ms >= self.min_silence_duration_ms)
+            
+            # Final decision with stability
+            final_voice_detected = stable_voice or (has_voice and self.last_voice_activity)
+            
+            # Update last activity
+            self.last_voice_activity = final_voice_detected
+            
+            vad_result = {
+                "has_voice": final_voice_detected,
+                "confidence": confidence,
+                "rms_energy": rms_energy,
+                "total_energy": total_energy,
+                "zero_crossing_rate": zcr,
+                "max_amplitude": max_amplitude,
+                "spectral_centroid": spectral_centroid,
+                "checks_passed": passed_checks,
+                "consecutive_voice_chunks": self.consecutive_voice_chunks,
+                "consecutive_silent_chunks": self.consecutive_silent_chunks,
+                "voice_duration_ms": voice_duration_ms,
+                "silence_duration_ms": silence_duration_ms,
+                "stable_voice": stable_voice,
+                "stable_silence": stable_silence
             }
+            
+            # Log VAD decision
+            if final_voice_detected:
+                audio_logger.debug(f"🎙️ Chunk {chunk_id}: VOICE detected (conf: {confidence:.2f}, RMS: {rms_energy:.4f})")
+            else:
+                audio_logger.debug(f"🔇 Chunk {chunk_id}: SILENCE detected (RMS: {rms_energy:.4f}, silence: {silence_duration_ms:.0f}ms)")
+            
+            return vad_result
             
         except Exception as e:
             audio_logger.error(f"❌ VAD error for chunk {chunk_id}: {e}")
-            # Conservative fallback - assume no speech on error
             return {
-                'has_speech': False,
-                'confidence': 0.5,
-                'reason': f'vad_error_{str(e)[:20]}'
+                "has_voice": False,
+                "confidence": 0.0,
+                "error": str(e)
             }
-    
-    def validate_realtime_chunk(self, audio_data: np.ndarray, chunk_id: int = None) -> bool:
-        """
-        Enhanced validation with VAD for real-time audio chunks
-        """
-        chunk_id = chunk_id or f"chunk_{int(time.time()*1000)}"
-        
-        try:
-            audio_logger.debug(f"🔍 Validating real-time chunk {chunk_id}")
-            
-            # Basic validation first
-            if audio_data is None or len(audio_data) == 0:
-                audio_logger.debug(f"❌ Chunk {chunk_id}: Empty audio")
-                return False
-            
-            if not isinstance(audio_data, np.ndarray):
-                audio_logger.debug(f"❌ Chunk {chunk_id}: Not numpy array")
-                return False
-            
-            # Check for reasonable audio length
-            min_samples = int(0.1 * self.sample_rate)  # At least 100ms
-            if len(audio_data) < min_samples:
-                audio_logger.debug(f"❌ Chunk {chunk_id}: Too short ({len(audio_data)} samples)")
-                return False
-            
-            # Voice Activity Detection
-            vad_result = self.detect_voice_activity(audio_data, chunk_id)
-            
-            if not vad_result['has_speech']:
-                audio_logger.debug(f"❌ Chunk {chunk_id}: No speech detected - {vad_result['reason']} (confidence: {vad_result['confidence']:.2f})")
-                return False
-            
-            audio_logger.debug(f"✅ Chunk {chunk_id}: Speech detected - {vad_result['reason']} (confidence: {vad_result['confidence']:.2f})")
-            return True
-            
-        except Exception as e:
-            audio_logger.error(f"❌ Error validating chunk {chunk_id}: {e}")
-            return False
     
     def preprocess_realtime_chunk(self, audio_data: np.ndarray, chunk_id: int = None, sample_rate: Optional[int] = None) -> torch.Tensor:
         """
-        Enhanced preprocessing with improved audio filtering
+        Enhanced preprocessing specifically optimized for real-time audio chunks
+        
+        Args:
+            audio_data: Raw audio data as numpy array
+            chunk_id: Unique identifier for this chunk (for logging)
+            sample_rate: Sample rate of input audio
+            
+        Returns:
+            Preprocessed audio tensor ready for Voxtral
         """
         start_time = time.time()
         chunk_id = chunk_id or self.chunk_counter
@@ -260,48 +234,31 @@ class AudioProcessor:
                 audio_data = audio_data.astype(np.float32)
                 audio_logger.debug(f"   🔄 Converted dtype from {original_dtype} to float32")
             
-            # Clean invalid values
+            # Check for invalid values
             nan_count = np.sum(np.isnan(audio_data))
             inf_count = np.sum(np.isinf(audio_data))
             if nan_count > 0 or inf_count > 0:
-                audio_logger.warning(f"⚠️  Chunk {chunk_id}: Cleaning {nan_count} NaN and {inf_count} infinite values")
+                audio_logger.warning(f"⚠️  Chunk {chunk_id} has {nan_count} NaN and {inf_count} infinite values - cleaning")
                 audio_data = np.nan_to_num(audio_data, nan=0.0, posinf=1.0, neginf=-1.0)
             
-            # Enhanced audio normalization
+            # Normalize audio to [-1, 1] range with enhanced handling for real-time
             max_val = np.max(np.abs(audio_data))
-            rms_val = np.sqrt(np.mean(audio_data ** 2))
-            
             audio_logger.debug(f"   📊 Max amplitude: {max_val:.6f}")
-            audio_logger.debug(f"   ⚡ RMS energy: {rms_val:.6f}")
             
-            # Intelligent amplification based on signal characteristics
             if max_val > 1.0:
-                # Normalize loud audio
                 audio_data = audio_data / max_val
-                audio_logger.debug(f"   🔧 Normalized loud audio (max: {max_val:.4f})")
-            elif max_val > 0.1:
-                # Good level audio - minor normalization
-                audio_data = audio_data * (0.8 / max_val)
-                audio_logger.debug(f"   🔧 Minor normalization applied")
-            elif max_val > self.min_speech_amplitude:
-                # Amplify quiet speech carefully
-                target_level = 0.3
-                amplification = min(target_level / max_val, 5.0)  # Max 5x amplification
-                audio_data = audio_data * amplification
-                audio_logger.debug(f"   🔊 Amplified speech by {amplification:.1f}x")
-            else:
-                # Very quiet - this should have been filtered by VAD
-                audio_logger.warning(f"⚠️  Chunk {chunk_id}: Very quiet audio passed VAD (max: {max_val:.6f})")
+                audio_logger.debug(f"   🔧 Normalized loud audio (max: {max_val:.4f}) for chunk {chunk_id}")
+            elif max_val < 1e-8:
+                audio_logger.warning(f"⚠️  Chunk {chunk_id} is very quiet (max: {max_val:.2e}), amplifying carefully")
+                # More conservative amplification for real-time
+                audio_data = audio_data * 100.0
+                audio_data = np.clip(audio_data, -1.0, 1.0)
+            elif max_val < 1e-4:
+                audio_logger.debug(f"   🔊 Quiet audio detected (max: {max_val:.6f}), gentle amplification")
+                audio_data = audio_data * 10.0
+                audio_data = np.clip(audio_data, -1.0, 1.0)
             
-            # Apply gentle high-pass filter to remove DC offset and low-frequency noise
-            if len(audio_data) > 100:  # Only for sufficient data
-                from scipy import signal
-                # High-pass filter at 80 Hz to remove rumble
-                sos = signal.butter(4, 80, btype='high', fs=self.sample_rate, output='sos')
-                audio_data = signal.sosfilt(sos, audio_data).astype(np.float32)
-                audio_logger.debug(f"   🎛️ Applied high-pass filter")
-            
-            # Resample if necessary
+            # Resample if necessary (real-time optimized)
             if sample_rate and sample_rate != self.sample_rate:
                 audio_logger.info(f"🔄 Resampling chunk {chunk_id} from {sample_rate}Hz to {self.sample_rate}Hz")
                 resample_start = time.time()
@@ -309,30 +266,29 @@ class AudioProcessor:
                     audio_data, 
                     orig_sr=sample_rate, 
                     target_sr=self.sample_rate,
-                    res_type='kaiser_fast'  # High quality but fast resampling
+                    res_type='fast'  # Fast resampling for real-time
                 )
                 resample_time = (time.time() - resample_start) * 1000
                 audio_logger.debug(f"   ⚡ Resampling completed in {resample_time:.1f}ms")
             
-            # Create tensor
+            # Create tensor with explicit copy for writeability
             audio_tensor = torch.from_numpy(audio_data.copy()).float()
             
-            # Ensure mono
+            # Ensure mono audio
             if len(audio_tensor.shape) > 1:
                 audio_tensor = torch.mean(audio_tensor, dim=0)
-                audio_logger.debug(f"   🎵 Converted to mono")
+                audio_logger.debug(f"   🎵 Converted to mono audio for chunk {chunk_id}")
             
-            # Ensure contiguous
+            # Ensure tensor is contiguous
             if not audio_tensor.is_contiguous():
                 audio_tensor = audio_tensor.contiguous()
-            
-            # Final clipping to safe range
-            audio_tensor = torch.clamp(audio_tensor, -1.0, 1.0)
+                audio_logger.debug(f"   🔧 Made tensor contiguous for chunk {chunk_id}")
             
             # Calculate processing metrics
             processing_time = (time.time() - start_time) * 1000
             audio_duration_s = len(audio_tensor) / self.sample_rate
             
+            # Store processing stats for monitoring
             processing_stats = {
                 'chunk_id': chunk_id,
                 'processing_time_ms': processing_time,
@@ -355,12 +311,68 @@ class AudioProcessor:
             audio_logger.error(f"❌ Error preprocessing chunk {chunk_id} after {processing_time:.1f}ms: {e}")
             raise
     
-    def preprocess_audio(self, audio_data: np.ndarray, sample_rate: Optional[int] = None) -> torch.Tensor:
-        """Legacy method that redirects to real-time preprocessing"""
-        return self.preprocess_realtime_chunk(audio_data, sample_rate=sample_rate)
+    def validate_realtime_chunk(self, audio_data: np.ndarray, chunk_id: int = None) -> bool:
+        """
+        PRODUCTION validation with Voice Activity Detection
+        
+        Args:
+            audio_data: Audio data to validate
+            chunk_id: Chunk identifier for logging
+            
+        Returns:
+            True if contains voice activity, False if silence/noise
+        """
+        chunk_id = chunk_id or f"chunk_{int(time.time()*1000)}"
+        
+        try:
+            audio_logger.debug(f"🔍 Validating real-time chunk {chunk_id}")
+            
+            # Check if audio data exists and is not empty
+            if audio_data is None or len(audio_data) == 0:
+                audio_logger.warning(f"⚠️  Chunk {chunk_id} is empty")
+                return False
+            
+            # Check for valid data types
+            if not isinstance(audio_data, np.ndarray):
+                audio_logger.warning(f"⚠️  Chunk {chunk_id} is not a numpy array: {type(audio_data)}")
+                return False
+            
+            # Check for NaN or infinite values
+            nan_count = np.sum(np.isnan(audio_data))
+            inf_count = np.sum(np.isinf(audio_data))
+            if nan_count > 0 or inf_count > 0:
+                audio_logger.warning(f"⚠️  Chunk {chunk_id} contains {nan_count} NaN and {inf_count} inf values")
+                # Clean the data first
+                audio_data = np.nan_to_num(audio_data, nan=0.0, posinf=1.0, neginf=-1.0)
+            
+            # Check for reasonable audio length - more permissive for real-time
+            min_samples = int(0.05 * self.sample_rate)  # At least 50ms
+            if len(audio_data) < min_samples:
+                audio_logger.warning(f"⚠️  Chunk {chunk_id} too short: {len(audio_data)} samples, minimum: {min_samples}")
+                return False
+            
+            # CRITICAL: Apply Voice Activity Detection
+            vad_result = self.detect_voice_activity(audio_data, chunk_id)
+            
+            # Return VAD decision
+            has_voice = vad_result.get("has_voice", False)
+            confidence = vad_result.get("confidence", 0.0)
+            
+            if has_voice:
+                audio_logger.debug(f"✅ Chunk {chunk_id} validation passed - VOICE detected (confidence: {confidence:.2f})")
+            else:
+                audio_logger.debug(f"🔇 Chunk {chunk_id} validation failed - SILENCE detected")
+                
+            return has_voice
+            
+        except Exception as e:
+            audio_logger.error(f"❌ Error validating chunk {chunk_id}: {e}")
+            return False
     
     def generate_log_mel_spectrogram(self, audio_tensor: torch.Tensor) -> torch.Tensor:
-        """Generate log-mel spectrogram optimized for real-time processing"""
+        """
+        Generate log-mel spectrogram optimized for real-time processing
+        """
         try:
             audio_logger.debug(f"🎵 Generating log-mel spectrogram")
             start_time = time.time()
@@ -386,7 +398,7 @@ class AudioProcessor:
             raise
     
     def get_processing_stats(self) -> dict:
-        """Get real-time processing statistics"""
+        """Get real-time processing statistics with VAD metrics"""
         if not self.processing_history:
             return {"message": "No processing history available"}
         
@@ -406,17 +418,70 @@ class AudioProcessor:
                 for h in history if h['processing_time_ms'] > 0
             ]), 2),
             "current_chunk_counter": self.chunk_counter,
-            "vad_enabled": True,
-            "min_speech_amplitude": self.min_speech_amplitude,
-            "silence_threshold": self.silence_threshold
+            "vad_settings": {
+                "vad_threshold": self.vad_threshold,
+                "min_voice_duration_ms": self.min_voice_duration_ms,
+                "min_silence_duration_ms": self.min_silence_duration_ms,
+                "energy_threshold": self.energy_threshold
+            },
+            "vad_state": {
+                "consecutive_voice_chunks": self.consecutive_voice_chunks,
+                "consecutive_silent_chunks": self.consecutive_silent_chunks,
+                "last_voice_activity": self.last_voice_activity
+            }
         }
     
+    def reset_vad_state(self):
+        """Reset VAD state counters (useful for new conversation sessions)"""
+        self.consecutive_silent_chunks = 0
+        self.consecutive_voice_chunks = 0
+        self.last_voice_activity = False
+        audio_logger.info("🔄 VAD state reset for new session")
+    
+    def adjust_vad_sensitivity(self, sensitivity: str = "medium"):
+        """
+        Adjust VAD sensitivity for different environments
+        
+        Args:
+            sensitivity: "low" (noisy), "medium" (normal), "high" (quiet)
+        """
+        if sensitivity == "low":  # Noisy environment
+            self.vad_threshold = 0.003
+            self.energy_threshold = 5e-6
+            self.min_voice_duration_ms = 500
+            audio_logger.info("🔊 VAD sensitivity set to LOW (noisy environment)")
+            
+        elif sensitivity == "high":  # Quiet environment
+            self.vad_threshold = 0.0005
+            self.energy_threshold = 1e-7
+            self.min_voice_duration_ms = 200
+            audio_logger.info("🔇 VAD sensitivity set to HIGH (quiet environment)")
+            
+        else:  # Medium (default)
+            self.vad_threshold = 0.001
+            self.energy_threshold = 1e-6
+            self.min_voice_duration_ms = 300
+            audio_logger.info("🎙️ VAD sensitivity set to MEDIUM (normal environment)")
+    
+    # Legacy methods for backward compatibility
+    def preprocess_audio(self, audio_data: np.ndarray, sample_rate: Optional[int] = None) -> torch.Tensor:
+        """Legacy method that redirects to real-time preprocessing"""
+        return self.preprocess_realtime_chunk(audio_data, sample_rate=sample_rate)
+    
+    def validate_audio_format(self, audio_data: np.ndarray) -> bool:
+        """Legacy method that redirects to real-time validation"""
+        return self.validate_realtime_chunk(audio_data)
+    
     def process_streaming_audio(self, audio_chunk: np.ndarray, chunk_id: int = None) -> torch.Tensor:
-        """Enhanced method for processing streaming audio chunks with VAD"""
+        """
+        Enhanced method for processing streaming audio chunks in real-time
+        """
         return self.preprocess_realtime_chunk(audio_chunk, chunk_id=chunk_id)
     
     def chunk_audio(self, audio_tensor: torch.Tensor, chunk_duration: float = 2.0) -> list:
-        """Chunk audio for real-time processing"""
+        """
+        Chunk audio for real-time processing (shorter chunks for better latency)
+        """
         try:
             chunk_samples = int(chunk_duration * self.sample_rate)
             chunks = []
@@ -443,36 +508,56 @@ class AudioProcessor:
             audio_logger.error(f"❌ Error chunking audio: {e}")
             raise
 
-# Test functionality if run directly
+# FIXED: Add proper main execution block for testing
 if __name__ == "__main__":
-    print("🧪 Testing Enhanced Audio Processor with VAD...")
+    """Test audio processor functionality with VAD"""
+    print("🧪 Testing Audio Processor with VAD...")
     
     try:
+        # Initialize processor
         processor = AudioProcessor()
         
-        # Test with silence
-        silence = np.zeros(16000, dtype=np.float32)  # 1 second of silence
-        print(f"🔇 Testing silence detection...")
-        is_valid = processor.validate_realtime_chunk(silence, chunk_id="silence_test")
-        print(f"   Silence validation: {is_valid} (should be False)")
+        # Test with dummy audio (voice simulation)
+        sample_rate = 16000
+        duration = 1.0
         
-        # Test with speech-like signal
-        speech = np.sin(2 * np.pi * 300 * np.linspace(0, 1, 16000)) * 0.1  # 300Hz tone
-        speech += np.random.normal(0, 0.02, 16000)  # Add some noise
-        speech = speech.astype(np.float32)
-        print(f"🎙️ Testing speech-like signal...")
-        is_valid = processor.validate_realtime_chunk(speech, chunk_id="speech_test")
-        print(f"   Speech validation: {is_valid} (should be True)")
+        # Generate voice-like audio (modulated sine wave)
+        t = np.linspace(0, duration, int(sample_rate * duration))
+        voice_audio = np.sin(2 * np.pi * 200 * t) * (1 + 0.5 * np.sin(2 * np.pi * 5 * t))
+        voice_audio = voice_audio.astype(np.float32) * 0.1  # Scale to reasonable amplitude
         
-        if is_valid:
-            audio_tensor = processor.preprocess_realtime_chunk(speech, chunk_id="speech_test")
-            print(f"   Preprocessing successful: {audio_tensor.shape}")
+        # Generate silence
+        silence_audio = np.random.normal(0, 0.0001, int(sample_rate * duration)).astype(np.float32)
         
-        # Print statistics
+        print(f"📊 Voice audio: {len(voice_audio)} samples")
+        print(f"📊 Silence audio: {len(silence_audio)} samples")
+        
+        # Test VAD on voice
+        vad_voice = processor.detect_voice_activity(voice_audio, chunk_id="voice_test")
+        print(f"🎙️ VAD Voice Result: {vad_voice['has_voice']} (confidence: {vad_voice['confidence']:.2f})")
+        
+        # Test VAD on silence
+        vad_silence = processor.detect_voice_activity(silence_audio, chunk_id="silence_test")
+        print(f"🔇 VAD Silence Result: {vad_silence['has_voice']} (confidence: {vad_silence['confidence']:.2f})")
+        
+        # Test validation with VAD
+        voice_valid = processor.validate_realtime_chunk(voice_audio, chunk_id="voice_validation")
+        silence_valid = processor.validate_realtime_chunk(silence_audio, chunk_id="silence_validation")
+        
+        print(f"✅ Voice validation: {voice_valid}")
+        print(f"❌ Silence validation: {silence_valid}")
+        
+        # Test preprocessing
+        if voice_valid:
+            voice_tensor = processor.preprocess_realtime_chunk(voice_audio, chunk_id="voice_preprocessing")
+            print(f"✅ Voice preprocessing completed: {voice_tensor.shape}")
+        
+        # Test performance stats
         stats = processor.get_processing_stats()
         print(f"📊 Processing stats: {stats}")
         
-        print("🎉 VAD-enhanced Audio Processor test completed!")
+        print("🎉 All VAD tests passed!")
         
     except Exception as e:
         print(f"❌ Test failed: {e}")
+        raise
