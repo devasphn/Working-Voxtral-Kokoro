@@ -1,6 +1,6 @@
 """
-FIXED UI server with proper module imports and main execution
-Enhanced for REAL-TIME streaming with corrected import paths
+OPTIMIZED UI server for CONVERSATIONAL real-time streaming
+Fixed WebSocket handling and improved user experience
 """
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -27,9 +27,9 @@ from src.utils.logging_config import logger
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="Voxtral Real-time Streaming UI",
-    description="Web interface for Voxtral REAL-TIME audio streaming",
-    version="2.0.0"
+    title="Voxtral Conversational Streaming UI",
+    description="Web interface for Voxtral CONVERSATIONAL audio streaming",
+    version="2.1.0"
 )
 
 # Enhanced logging for real-time streaming
@@ -65,14 +65,14 @@ if static_path.exists():
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    """Serve REAL-TIME streaming web interface"""
+    """Serve CONVERSATIONAL streaming web interface"""
     html_content = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voxtral Real-time Streaming</title>
+    <title>Voxtral Conversational AI</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -143,16 +143,31 @@ async def home(request: Request):
             margin-bottom: 20px;
             border-left: 4px solid #00b894;
         }
-        .response {
+        .conversation {
             background: rgba(255, 255, 255, 0.1);
             padding: 20px;
             border-radius: 15px;
             margin-top: 20px;
             border-left: 4px solid #74b9ff;
-            white-space: pre-wrap;
-            font-family: 'Courier New', monospace;
             max-height: 400px;
             overflow-y: auto;
+        }
+        .message {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.1);
+        }
+        .user-message {
+            background: rgba(0, 184, 148, 0.3);
+            text-align: right;
+        }
+        .ai-message {
+            background: rgba(116, 185, 255, 0.3);
+        }
+        .timestamp {
+            font-size: 0.8em;
+            opacity: 0.7;
         }
         .audio-controls {
             display: flex;
@@ -243,16 +258,6 @@ async def home(request: Request):
             width: 0%;
             transition: width 0.1s;
         }
-        .log-panel {
-            background: rgba(0, 0, 0, 0.3);
-            padding: 15px;
-            border-radius: 10px;
-            margin-top: 20px;
-            max-height: 200px;
-            overflow-y: auto;
-            font-family: 'Courier New', monospace;
-            font-size: 0.8em;
-        }
         select, input {
             padding: 10px;
             border: none;
@@ -260,6 +265,14 @@ async def home(request: Request):
             font-size: 16px;
             background: rgba(255, 255, 255, 0.9);
             color: #333;
+        }
+        .performance-warning {
+            background: rgba(241, 196, 15, 0.3);
+            border-left: 4px solid #f1c40f;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
+            font-size: 0.9em;
         }
     </style>
 </head>
@@ -269,36 +282,36 @@ async def home(request: Request):
     </div>
     
     <div class="container">
-        <h1>🎙️ Voxtral Real-time Streaming</h1>
-        <p style="text-align: center; opacity: 0.8;">TRUE real-time streaming - continuous audio processing</p>
+        <h1>🎙️ Voxtral Conversational AI</h1>
+        <p style="text-align: center; opacity: 0.8;">Natural conversation with real-time AI voice processing</p>
         
         <div class="url-info" id="urlInfo">
             <strong>WebSocket URL:</strong> <span id="wsUrl">Detecting...</span><br>
             <strong>Environment:</strong> <span id="envInfo">Detecting...</span><br>
-            <strong>Mode:</strong> Real-time continuous streaming
+            <strong>Mode:</strong> Conversational real-time streaming
         </div>
         
         <div class="status" id="status">
-            Ready to connect. Click "Connect" to start real-time streaming.
+            Ready to connect. Click "Connect" to start conversation.
         </div>
         
         <div class="controls">
             <button id="connectBtn" class="connect-btn" onclick="connect()">Connect</button>
-            <button id="streamBtn" class="stream-btn" onclick="startRealtimeStreaming()" disabled>Start Real-time Stream</button>
-            <button id="stopBtn" class="stop-btn" onclick="stopRealtimeStreaming()" disabled>Stop Stream</button>
+            <button id="streamBtn" class="stream-btn" onclick="startConversation()" disabled>Start Conversation</button>
+            <button id="stopBtn" class="stop-btn" onclick="stopConversation()" disabled>Stop Conversation</button>
         </div>
         
         <div class="audio-controls">
             <label>Mode:</label>
             <select id="modeSelect">
-                <option value="transcribe">Transcribe</option>
-                <option value="understand">Understand</option>
+                <option value="transcribe">Simple Transcription</option>
+                <option value="understand">Smart Conversation</option>
             </select>
             
-            <label>Prompt:</label>
-            <input type="text" id="promptInput" placeholder="Optional prompt..." style="flex: 1; min-width: 200px;">
+            <label>Custom Prompt:</label>
+            <input type="text" id="promptInput" placeholder="Optional custom prompt..." style="flex: 1; min-width: 200px;">
             
-            <span>Real-time:</span>
+            <span>Live:</span>
             <span class="realtime-indicator" id="realtimeIndicator"></span>
         </div>
         
@@ -313,20 +326,25 @@ async def home(request: Request):
             </div>
             <div class="metric">
                 <div class="metric-value" id="chunksMetric">0</div>
-                <div class="metric-label">Chunks Processed</div>
+                <div class="metric-label">Messages Processed</div>
             </div>
             <div class="metric">
                 <div class="metric-value" id="durationMetric">00:00</div>
-                <div class="metric-label">Stream Duration</div>
+                <div class="metric-label">Conversation Duration</div>
             </div>
         </div>
         
-        <div class="response" id="response" style="display: none;">
-            Real-time responses will appear here...
+        <div class="conversation" id="conversation" style="display: none;">
+            <div id="conversationContent">
+                <div class="message ai-message">
+                    <div><strong>AI:</strong> Hello! I'm ready to have a conversation with you. Start speaking and I'll respond in real-time.</div>
+                    <div class="timestamp">Ready to chat</div>
+                </div>
+            </div>
         </div>
         
-        <div class="log-panel" id="logPanel" style="display: none;">
-            <div id="logContent"></div>
+        <div id="performanceWarning" class="performance-warning" style="display: none;">
+            ⚠️ High latency detected. For better performance, try using "Simple Transcription" mode.
         </div>
     </div>
     
@@ -341,25 +359,16 @@ async def home(request: Request):
         let streamStartTime = null;
         let latencySum = 0;
         let responseCount = 0;
+        let silenceTimer = null;
         
-        // Streaming configuration
-        const CHUNK_SIZE = 4096;  // Audio buffer size
-        const CHUNK_INTERVAL = 1000; // Send chunks every 1 second
+        // Optimized streaming configuration for conversation
+        const CHUNK_SIZE = 4096;
+        const CHUNK_INTERVAL = 1000; // Process every 1 second
         const SAMPLE_RATE = 16000;
+        const LATENCY_WARNING_THRESHOLD = 800; // Show warning if latency > 800ms
         
         function log(message, type = 'info') {
-            const timestamp = new Date().toLocaleTimeString();
-            const logPanel = document.getElementById('logPanel');
-            const logContent = document.getElementById('logContent');
-            
-            logPanel.style.display = 'block';
-            
-            const logEntry = document.createElement('div');
-            logEntry.innerHTML = `<span style="color: #74b9ff;">[${timestamp}]</span> ${message}`;
-            logContent.appendChild(logEntry);
-            logContent.scrollTop = logContent.scrollHeight;
-            
-            console.log(`[Voxtral Real-time] ${message}`);
+            console.log(`[Voxtral Conversational] ${message}`);
         }
         
         // Detect environment and construct WebSocket URL
@@ -404,7 +413,7 @@ async def home(request: Request):
             const indicator = document.getElementById('realtimeIndicator');
             
             if (streaming) {
-                status.textContent = 'Streaming';
+                status.textContent = 'Conversing';
                 status.className = 'connection-status streaming';
                 indicator.classList.add('active');
             } else if (connected) {
@@ -420,13 +429,13 @@ async def home(request: Request):
         
         async function connect() {
             try {
-                updateStatus('Connecting to Voxtral streaming server...', 'loading');
+                updateStatus('Connecting to Voxtral conversational AI...', 'loading');
                 log('Attempting WebSocket connection...');
                 
                 ws = new WebSocket(wsUrl);
                 
                 ws.onopen = () => {
-                    updateStatus('Connected! Ready to start real-time streaming.', 'success');
+                    updateStatus('Connected! Ready to start conversation.', 'success');
                     updateConnectionStatus(true);
                     document.getElementById('connectBtn').disabled = true;
                     document.getElementById('streamBtn').disabled = false;
@@ -469,7 +478,7 @@ async def home(request: Request):
                     break;
                     
                 case 'response':
-                    displayResponse(data);
+                    displayConversationMessage(data);
                     break;
                     
                 case 'error':
@@ -485,27 +494,42 @@ async def home(request: Request):
             }
         }
         
-        function displayResponse(data) {
-            const responseDiv = document.getElementById('response');
-            responseDiv.style.display = 'block';
+        function displayConversationMessage(data) {
+            const conversationDiv = document.getElementById('conversation');
+            const contentDiv = document.getElementById('conversationContent');
+            conversationDiv.style.display = 'block';
             
-            // Append new response with timestamp
+            // Create AI response message
             const timestamp = new Date().toLocaleTimeString();
-            const responseEntry = `[${timestamp}] ${data.text}\\n`;
-            responseDiv.textContent += responseEntry;
-            responseDiv.scrollTop = responseDiv.scrollHeight;
+            const aiMessage = document.createElement('div');
+            aiMessage.className = 'message ai-message';
+            aiMessage.innerHTML = `
+                <div><strong>AI:</strong> ${data.text}</div>
+                <div class="timestamp">${timestamp} (${data.processing_time_ms}ms)</div>
+            `;
+            
+            contentDiv.appendChild(aiMessage);
+            conversationDiv.scrollTop = conversationDiv.scrollHeight;
             
             // Update metrics
             responseCount++;
             if (data.processing_time_ms) {
                 latencySum += data.processing_time_ms;
-                document.getElementById('latencyMetric').textContent = 
-                    Math.round(latencySum / responseCount);
+                const avgLatency = Math.round(latencySum / responseCount);
+                document.getElementById('latencyMetric').textContent = avgLatency;
+                
+                // Show performance warning if latency is high
+                const warningDiv = document.getElementById('performanceWarning');
+                if (data.processing_time_ms > LATENCY_WARNING_THRESHOLD) {
+                    warningDiv.style.display = 'block';
+                } else if (avgLatency < LATENCY_WARNING_THRESHOLD) {
+                    warningDiv.style.display = 'none';
+                }
             }
             
             document.getElementById('chunksMetric').textContent = responseCount;
             
-            log(`Response received: "${data.text}" (${data.processing_time_ms}ms)`);
+            log(`AI Response: "${data.text}" (${data.processing_time_ms}ms)`);
         }
         
         function updateStreamDuration() {
@@ -517,12 +541,12 @@ async def home(request: Request):
             }
         }
         
-        // REAL-TIME AUDIO STREAMING FUNCTIONS
+        // CONVERSATIONAL AUDIO STREAMING FUNCTIONS
         
-        async function startRealtimeStreaming() {
+        async function startConversation() {
             try {
-                log('Starting real-time audio streaming...');
-                updateStatus('Initializing real-time audio capture...', 'loading');
+                log('Starting conversational audio streaming...');
+                updateStatus('Initializing microphone for conversation...', 'loading');
                 
                 // Request microphone access
                 mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -586,24 +610,24 @@ async def home(request: Request):
                 document.getElementById('streamBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
                 updateConnectionStatus(true, true);
-                updateStatus('🎙️ Real-time streaming active - speak into microphone', 'success');
+                updateStatus('🎙️ Conversation active - speak naturally!', 'success');
                 
                 // Start duration timer
                 setInterval(updateStreamDuration, 1000);
                 
-                log('Real-time streaming started successfully');
+                log('Conversational streaming started successfully');
                 
             } catch (error) {
-                updateStatus('Failed to start streaming: ' + error.message, 'error');
-                log('Streaming start failed: ' + error.message);
-                console.error('Streaming error:', error);
+                updateStatus('Failed to start conversation: ' + error.message, 'error');
+                log('Conversation start failed: ' + error.message);
+                console.error('Conversation error:', error);
             }
         }
         
-        function stopRealtimeStreaming() {
+        function stopConversation() {
             isStreaming = false;
             
-            log('Stopping real-time streaming...');
+            log('Stopping conversational streaming...');
             
             if (audioWorkletNode) {
                 audioWorkletNode.disconnect();
@@ -624,12 +648,12 @@ async def home(request: Request):
             document.getElementById('streamBtn').disabled = false;
             document.getElementById('stopBtn').disabled = true;
             updateConnectionStatus(true, false);
-            updateStatus('Real-time streaming stopped. Ready to stream again.', 'info');
+            updateStatus('Conversation ended. Ready to start a new conversation.', 'info');
             
             // Reset volume meter
             document.getElementById('volumeBar').style.width = '0%';
             
-            log('Real-time streaming stopped');
+            log('Conversational streaming stopped');
         }
         
         function updateVolumeMeter(audioData) {
@@ -689,14 +713,14 @@ async def home(request: Request):
         // Initialize on page load
         window.addEventListener('load', () => {
             detectEnvironment();
-            updateStatus('Ready to connect for real-time streaming');
-            log('Application initialized');
+            updateStatus('Ready to connect for conversation');
+            log('Conversational application initialized');
         });
         
         // Cleanup on page unload
         window.addEventListener('beforeunload', () => {
             if (isStreaming) {
-                stopRealtimeStreaming();
+                stopConversation();
             }
             if (ws) {
                 ws.close();
@@ -721,7 +745,8 @@ async def api_status():
             "config": {
                 "sample_rate": config.audio.sample_rate,
                 "tcp_ports": config.server.tcp_ports,
-                "latency_target": config.streaming.latency_target_ms
+                "latency_target": config.streaming.latency_target_ms,
+                "mode": "conversational_optimized"
             }
         })
     except Exception as e:
@@ -731,65 +756,73 @@ async def api_status():
             "error": str(e)
         }, status_code=500)
 
-# WebSocket endpoint for REAL-TIME streaming
+# WebSocket endpoint for CONVERSATIONAL streaming
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for REAL-TIME continuous audio streaming"""
+    """WebSocket endpoint for CONVERSATIONAL audio streaming"""
     await websocket.accept()
     client_id = f"{websocket.client.host}:{websocket.client.port}"
-    streaming_logger.info(f"[REALTIME] Client connected: {client_id}")
+    streaming_logger.info(f"[CONVERSATION] Client connected: {client_id}")
     
     try:
         # Send welcome message
         await websocket.send_text(json.dumps({
             "type": "connection",
             "status": "connected",
-            "message": "Connected to Voxtral real-time streaming server",
+            "message": "Connected to Voxtral conversational AI",
             "server_config": {
                 "sample_rate": config.audio.sample_rate,
                 "chunk_size": config.audio.chunk_size,
                 "latency_target": config.streaming.latency_target_ms,
-                "streaming_mode": "real_time_continuous"
+                "streaming_mode": "conversational_optimized"
             }
         }))
         
         while True:
-            # Receive message
-            data = await websocket.receive_text()
-            message = json.loads(data)
-            msg_type = message.get("type")
-            
-            streaming_logger.debug(f"[REALTIME] Received message type: {msg_type} from {client_id}")
-            
-            if msg_type == "audio_chunk":
-                # Handle real-time audio chunk
-                await handle_realtime_audio_chunk(websocket, message, client_id)
+            try:
+                # Receive message with timeout to handle disconnections better
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=300.0)
+                message = json.loads(data)
+                msg_type = message.get("type")
                 
-            elif msg_type == "ping":
-                await websocket.send_text(json.dumps({
-                    "type": "pong", 
-                    "timestamp": time.time()
-                }))
+                streaming_logger.debug(f"[CONVERSATION] Received message type: {msg_type} from {client_id}")
                 
-            elif msg_type == "status":
-                voxtral_model = get_voxtral_model()
-                model_info = voxtral_model.get_model_info()
-                await websocket.send_text(json.dumps({
-                    "type": "status",
-                    "model_info": model_info
-                }))
-                
-            else:
-                streaming_logger.warning(f"[REALTIME] Unknown message type: {msg_type}")
-                await websocket.send_text(json.dumps({
-                    "type": "error",
-                    "message": f"Unknown message type: {msg_type}"
-                }))
-                
+                if msg_type == "audio_chunk":
+                    # Handle conversational audio chunk
+                    await handle_conversational_audio_chunk(websocket, message, client_id)
+                    
+                elif msg_type == "ping":
+                    await websocket.send_text(json.dumps({
+                        "type": "pong", 
+                        "timestamp": time.time()
+                    }))
+                    
+                elif msg_type == "status":
+                    voxtral_model = get_voxtral_model()
+                    model_info = voxtral_model.get_model_info()
+                    await websocket.send_text(json.dumps({
+                        "type": "status",
+                        "model_info": model_info
+                    }))
+                    
+                else:
+                    streaming_logger.warning(f"[CONVERSATION] Unknown message type: {msg_type}")
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "message": f"Unknown message type: {msg_type}"
+                    }))
+                    
+            except asyncio.TimeoutError:
+                streaming_logger.info(f"[CONVERSATION] Client {client_id} timeout - sending ping")
+                try:
+                    await websocket.send_text(json.dumps({"type": "ping"}))
+                except:
+                    break
+                    
     except WebSocketDisconnect:
-        streaming_logger.info(f"[REALTIME] Client disconnected: {client_id}")
+        streaming_logger.info(f"[CONVERSATION] Client disconnected: {client_id}")
     except Exception as e:
-        streaming_logger.error(f"[REALTIME] WebSocket error for {client_id}: {e}")
+        streaming_logger.error(f"[CONVERSATION] WebSocket error for {client_id}: {e}")
         try:
             await websocket.send_text(json.dumps({
                 "type": "error",
@@ -798,13 +831,13 @@ async def websocket_endpoint(websocket: WebSocket):
         except:
             pass
 
-async def handle_realtime_audio_chunk(websocket: WebSocket, data: dict, client_id: str):
-    """Process real-time audio chunks as they arrive"""
+async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, client_id: str):
+    """Process conversational audio chunks as they arrive"""
     try:
         chunk_start_time = time.time()
         chunk_id = data.get("chunk_id", 0)
         
-        streaming_logger.info(f"[REALTIME] Processing chunk {chunk_id} for {client_id}")
+        streaming_logger.info(f"[CONVERSATION] Processing chunk {chunk_id} for {client_id}")
         
         # Get models with lazy initialization
         voxtral_model = get_voxtral_model()
@@ -812,107 +845,93 @@ async def handle_realtime_audio_chunk(websocket: WebSocket, data: dict, client_i
         
         # Initialize model if needed (first time use)
         if not voxtral_model.is_initialized:
-            streaming_logger.info(f"[REALTIME] Initializing Voxtral model for {client_id}")
+            streaming_logger.info(f"[CONVERSATION] Initializing Voxtral model for {client_id}")
             await websocket.send_text(json.dumps({
                 "type": "info",
-                "message": "Loading AI model for real-time processing... This may take 30+ seconds"
+                "message": "Loading conversational AI... This may take 30+ seconds"
             }))
             await voxtral_model.initialize()
-            streaming_logger.info(f"[REALTIME] Model initialized for {client_id}")
+            streaming_logger.info(f"[CONVERSATION] Model initialized for {client_id}")
         
         # Extract and validate audio data
         audio_b64 = data.get("audio_data")
         if not audio_b64:
-            streaming_logger.warning(f"[REALTIME] No audio data in chunk {chunk_id}")
-            await websocket.send_text(json.dumps({
-                "type": "error",
-                "message": "No audio data provided"
-            }))
-            return
+            streaming_logger.warning(f"[CONVERSATION] No audio data in chunk {chunk_id}")
+            return  # Skip empty chunks silently
         
         # Decode base64 audio
         try:
             audio_bytes = base64.b64decode(audio_b64)
             audio_array = np.frombuffer(audio_bytes, dtype=np.float32)
-            streaming_logger.debug(f"[REALTIME] Decoded {len(audio_array)} audio samples from chunk {chunk_id}")
+            streaming_logger.debug(f"[CONVERSATION] Decoded {len(audio_array)} audio samples from chunk {chunk_id}")
         except Exception as e:
-            streaming_logger.error(f"[REALTIME] Audio decoding error for chunk {chunk_id}: {e}")
-            await websocket.send_text(json.dumps({
-                "type": "error",
-                "message": f"Audio decoding error: {str(e)}"
-            }))
-            return
+            streaming_logger.error(f"[CONVERSATION] Audio decoding error for chunk {chunk_id}: {e}")
+            return  # Skip corrupted chunks silently
         
-        # Validate audio format
+        # Validate audio format (more lenient for conversation)
         if not audio_processor.validate_realtime_chunk(audio_array, chunk_id):
-            streaming_logger.warning(f"[REALTIME] Invalid audio format in chunk {chunk_id}")
-            await websocket.send_text(json.dumps({
-                "type": "error", 
-                "message": "Invalid audio format - chunk too small or corrupted"
-            }))
-            return
+            streaming_logger.debug(f"[CONVERSATION] Skipping invalid audio chunk {chunk_id}")
+            return  # Skip invalid chunks silently
         
         # Preprocess audio
         try:
             audio_tensor = audio_processor.preprocess_realtime_chunk(audio_array, chunk_id)
-            streaming_logger.debug(f"[REALTIME] Preprocessed audio tensor shape: {audio_tensor.shape}")
+            streaming_logger.debug(f"[CONVERSATION] Preprocessed audio tensor shape: {audio_tensor.shape}")
         except Exception as e:
-            streaming_logger.error(f"[REALTIME] Audio preprocessing error for chunk {chunk_id}: {e}")
-            await websocket.send_text(json.dumps({
-                "type": "error",
-                "message": f"Audio preprocessing error: {str(e)}"
-            }))
-            return
+            streaming_logger.error(f"[CONVERSATION] Audio preprocessing error for chunk {chunk_id}: {e}")
+            return  # Skip preprocessing errors silently
         
         # Get processing parameters
         mode = data.get("mode", "transcribe")
         prompt = data.get("prompt", "")
         
-        streaming_logger.debug(f"[REALTIME] Processing chunk {chunk_id} in mode '{mode}'")
+        streaming_logger.debug(f"[CONVERSATION] Processing chunk {chunk_id} in mode '{mode}'")
         
-        # Process with Voxtral
+        # Process with Voxtral using optimized method
         try:
-            if mode == "transcribe":
-                response = await voxtral_model.transcribe_audio(audio_tensor)
-            elif mode == "understand":
-                if not prompt:
-                    prompt = "What can you tell me about this audio?"
-                response = await voxtral_model.understand_audio(audio_tensor, prompt)
-            else:
-                response = await voxtral_model.process_audio_stream(audio_tensor, prompt)
+            result = await voxtral_model.process_realtime_chunk(
+                audio_tensor, 
+                chunk_id, 
+                mode=mode, 
+                prompt=prompt
+            )
+            
+            if result['success']:
+                response = result['response']
+                processing_time = result['processing_time_ms']
                 
-            processing_time = (time.time() - chunk_start_time) * 1000
-            
-            streaming_logger.info(f"[REALTIME] Chunk {chunk_id} processed in {processing_time:.1f}ms: '{response[:50]}...'")
-            
+                streaming_logger.info(f"[CONVERSATION] Chunk {chunk_id} processed in {processing_time:.1f}ms: '{response[:50]}...'")
+                
+                # Send response only if we have meaningful content
+                if response and response.strip() and len(response.strip()) > 2:
+                    await websocket.send_text(json.dumps({
+                        "type": "response",
+                        "mode": mode,
+                        "text": response,
+                        "chunk_id": chunk_id,
+                        "processing_time_ms": round(processing_time, 1),
+                        "audio_duration_ms": len(audio_array) / config.audio.sample_rate * 1000,
+                        "timestamp": data.get("timestamp", time.time())
+                    }))
+                    
+                    streaming_logger.info(f"[CONVERSATION] Response sent for chunk {chunk_id} to {client_id}")
+                else:
+                    streaming_logger.debug(f"[CONVERSATION] Skipping empty response for chunk {chunk_id}")
+                    
+            else:
+                streaming_logger.warning(f"[CONVERSATION] Processing failed for chunk {chunk_id}: {result.get('error', 'Unknown error')}")
+                
         except Exception as e:
-            streaming_logger.error(f"[REALTIME] Voxtral processing error for chunk {chunk_id}: {e}")
-            response = f"Processing error: {str(e)}"
-            processing_time = (time.time() - chunk_start_time) * 1000
-        
-        # Send response
-        await websocket.send_text(json.dumps({
-            "type": "response",
-            "mode": mode,
-            "text": response,
-            "chunk_id": chunk_id,
-            "processing_time_ms": round(processing_time, 1),
-            "audio_duration_ms": len(audio_array) / config.audio.sample_rate * 1000,
-            "timestamp": data.get("timestamp", time.time())
-        }))
-        
-        streaming_logger.info(f"[REALTIME] Response sent for chunk {chunk_id} to {client_id}")
+            streaming_logger.error(f"[CONVERSATION] Voxtral processing error for chunk {chunk_id}: {e}")
+            # Don't send error messages to user - just log and continue
         
     except Exception as e:
-        streaming_logger.error(f"[REALTIME] Error handling audio chunk: {e}")
-        await websocket.send_text(json.dumps({
-            "type": "error",
-            "message": f"Chunk processing error: {str(e)}"
-        }))
+        streaming_logger.error(f"[CONVERSATION] Error handling audio chunk: {e}")
+        # Don't send error messages to user for better UX
 
 # FIXED: Add proper main execution block
 if __name__ == "__main__":
-    streaming_logger.info("Starting Voxtral Real-time Streaming UI Server")
+    streaming_logger.info("Starting Voxtral Conversational Streaming UI Server")
     uvicorn.run(
         app,
         host=config.server.host,
