@@ -1,6 +1,6 @@
 """
-OPTIMIZED UI server for CONVERSATIONAL real-time streaming
-Fixed WebSocket handling and improved user experience
+FIXED UI server for CONVERSATIONAL real-time streaming
+Improved WebSocket handling and silence detection UI feedback
 """
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -28,8 +28,8 @@ from src.utils.logging_config import logger
 # Initialize FastAPI app
 app = FastAPI(
     title="Voxtral Conversational Streaming UI",
-    description="Web interface for Voxtral CONVERSATIONAL audio streaming",
-    version="2.1.0"
+    description="Web interface for Voxtral CONVERSATIONAL audio streaming with VAD",
+    version="2.2.0"
 )
 
 # Enhanced logging for real-time streaming
@@ -58,21 +58,16 @@ def get_audio_processor():
         streaming_logger.info("Audio processor lazy-loaded")
     return _audio_processor
 
-# Setup static files if directory exists
-static_path = Path(__file__).parent.parent.parent / "static"
-if static_path.exists():
-    app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
-
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    """Serve CONVERSATIONAL streaming web interface"""
+    """Serve CONVERSATIONAL streaming web interface with VAD feedback"""
     html_content = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voxtral Conversational AI</title>
+    <title>Voxtral Conversational AI with VAD</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -165,6 +160,11 @@ async def home(request: Request):
         .ai-message {
             background: rgba(116, 185, 255, 0.3);
         }
+        .silence-message {
+            background: rgba(155, 155, 155, 0.3);
+            font-style: italic;
+            opacity: 0.7;
+        }
         .timestamp {
             font-size: 0.8em;
             opacity: 0.7;
@@ -219,14 +219,32 @@ async def home(request: Request):
             50% { opacity: 0.7; }
             100% { opacity: 1; }
         }
-        .url-info {
+        .vad-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
             background: rgba(255, 255, 255, 0.1);
-            padding: 15px;
             border-radius: 10px;
             margin-bottom: 20px;
-            font-family: 'Courier New', monospace;
+        }
+        .vad-status {
+            padding: 5px 15px;
+            border-radius: 15px;
+            font-weight: bold;
             font-size: 0.9em;
-            border-left: 4px solid #74b9ff;
+        }
+        .vad-speech {
+            background: #00b894;
+            color: white;
+        }
+        .vad-silence {
+            background: #636e72;
+            color: white;
+        }
+        .vad-processing {
+            background: #fdcb6e;
+            color: #2d3436;
         }
         .realtime-indicator {
             display: inline-block;
@@ -240,9 +258,18 @@ async def home(request: Request):
             background: #00b894;
             animation: blink 1s infinite;
         }
+        .realtime-indicator.speech {
+            background: #fdcb6e;
+            animation: pulse-speech 0.5s infinite;
+        }
         @keyframes blink {
             0%, 50% { opacity: 1; }
             51%, 100% { opacity: 0.3; }
+        }
+        @keyframes pulse-speech {
+            0% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.7; transform: scale(1.2); }
+            100% { opacity: 1; transform: scale(1); }
         }
         .volume-meter {
             width: 100%;
@@ -257,6 +284,9 @@ async def home(request: Request):
             background: linear-gradient(45deg, #00b894, #74b9ff);
             width: 0%;
             transition: width 0.1s;
+        }
+        .volume-bar.speech {
+            background: linear-gradient(45deg, #fdcb6e, #e17055);
         }
         select, input {
             padding: 10px;
@@ -274,6 +304,13 @@ async def home(request: Request):
             margin-top: 10px;
             font-size: 0.9em;
         }
+        .vad-stats {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 10px;
+            border-radius: 10px;
+            margin-top: 10px;
+            font-size: 0.9em;
+        }
     </style>
 </head>
 <body>
@@ -283,12 +320,13 @@ async def home(request: Request):
     
     <div class="container">
         <h1>🎙️ Voxtral Conversational AI</h1>
-        <p style="text-align: center; opacity: 0.8;">Natural conversation with real-time AI voice processing</p>
+        <p style="text-align: center; opacity: 0.8;">Intelligent conversation with Voice Activity Detection</p>
         
-        <div class="url-info" id="urlInfo">
-            <strong>WebSocket URL:</strong> <span id="wsUrl">Detecting...</span><br>
-            <strong>Environment:</strong> <span id="envInfo">Detecting...</span><br>
-            <strong>Mode:</strong> Conversational real-time streaming
+        <div class="vad-indicator">
+            <strong>🎤 Voice Status:</strong>
+            <span class="vad-status vad-silence" id="vadStatus">Waiting</span>
+            <span>Live:</span>
+            <span class="realtime-indicator" id="realtimeIndicator"></span>
         </div>
         
         <div class="status" id="status">
@@ -310,13 +348,17 @@ async def home(request: Request):
             
             <label>Custom Prompt:</label>
             <input type="text" id="promptInput" placeholder="Optional custom prompt..." style="flex: 1; min-width: 200px;">
-            
-            <span>Live:</span>
-            <span class="realtime-indicator" id="realtimeIndicator"></span>
         </div>
         
         <div class="volume-meter">
             <div class="volume-bar" id="volumeBar"></div>
+        </div>
+        
+        <div class="vad-stats" id="vadStats" style="display: none;">
+            <strong>VAD Statistics:</strong><br>
+            Speech Chunks: <span id="speechChunks">0</span> | 
+            Silence Chunks: <span id="silenceChunks">0</span> | 
+            Processing Rate: <span id="processingRate">0%</span>
         </div>
         
         <div class="metrics">
@@ -326,7 +368,11 @@ async def home(request: Request):
             </div>
             <div class="metric">
                 <div class="metric-value" id="chunksMetric">0</div>
-                <div class="metric-label">Messages Processed</div>
+                <div class="metric-label">Speech Processed</div>
+            </div>
+            <div class="metric">
+                <div class="metric-value" id="silenceSkipped">0</div>
+                <div class="metric-label">Silence Skipped</div>
             </div>
             <div class="metric">
                 <div class="metric-value" id="durationMetric">00:00</div>
@@ -337,14 +383,14 @@ async def home(request: Request):
         <div class="conversation" id="conversation" style="display: none;">
             <div id="conversationContent">
                 <div class="message ai-message">
-                    <div><strong>AI:</strong> Hello! I'm ready to have a conversation with you. Start speaking and I'll respond in real-time.</div>
-                    <div class="timestamp">Ready to chat</div>
+                    <div><strong>AI:</strong> Hello! I'm ready to have a conversation. I'll only respond when I detect speech, so there's no need to worry about background noise.</div>
+                    <div class="timestamp">Ready to chat with VAD enabled</div>
                 </div>
             </div>
         </div>
         
         <div id="performanceWarning" class="performance-warning" style="display: none;">
-            ⚠️ High latency detected. For better performance, try using "Simple Transcription" mode.
+            ⚠️ High latency detected. For better performance, try using "Simple Transcription" mode or check your internet connection.
         </div>
     </div>
     
@@ -359,16 +405,18 @@ async def home(request: Request):
         let streamStartTime = null;
         let latencySum = 0;
         let responseCount = 0;
-        let silenceTimer = null;
+        let speechChunks = 0;
+        let silenceChunks = 0;
+        let lastVadUpdate = 0;
         
-        // Optimized streaming configuration for conversation
+        // Optimized configuration
         const CHUNK_SIZE = 4096;
-        const CHUNK_INTERVAL = 1000; // Process every 1 second
+        const CHUNK_INTERVAL = 1000;
         const SAMPLE_RATE = 16000;
-        const LATENCY_WARNING_THRESHOLD = 800; // Show warning if latency > 800ms
+        const LATENCY_WARNING_THRESHOLD = 1000;
         
         function log(message, type = 'info') {
-            console.log(`[Voxtral Conversational] ${message}`);
+            console.log(`[Voxtral VAD] ${message}`);
         }
         
         // Detect environment and construct WebSocket URL
@@ -379,17 +427,16 @@ async def home(request: Request):
             if (hostname.includes('proxy.runpod.net')) {
                 const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
                 wsUrl = `${wsProtocol}//${hostname}/ws`;
-                document.getElementById('envInfo').textContent = 'RunPod Cloud (HTTP Proxy)';
+                document.getElementById('envInfo') && (document.getElementById('envInfo').textContent = 'RunPod Cloud (HTTP Proxy)');
             } else if (hostname === 'localhost' || hostname === '127.0.0.1') {
                 wsUrl = `ws://${hostname}:8000/ws`;
-                document.getElementById('envInfo').textContent = 'Local Development';
+                document.getElementById('envInfo') && (document.getElementById('envInfo').textContent = 'Local Development');
             } else {
                 const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
                 wsUrl = `${wsProtocol}//${hostname}/ws`;
-                document.getElementById('envInfo').textContent = 'Custom Deployment';
+                document.getElementById('envInfo') && (document.getElementById('envInfo').textContent = 'Custom Deployment');
             }
             
-            document.getElementById('wsUrl').textContent = wsUrl;
             log(`WebSocket URL detected: ${wsUrl}`);
         }
         
@@ -397,14 +444,8 @@ async def home(request: Request):
             const status = document.getElementById('status');
             status.textContent = message;
             
-            // Update visual styling
-            if (type === 'loading') {
-                status.style.borderLeftColor = '#f39c12';
-            } else {
-                status.style.borderLeftColor = type === 'error' ? '#e17055' : 
-                                               type === 'success' ? '#00b894' : '#74b9ff';
-            }
-            
+            status.style.borderLeftColor = type === 'error' ? '#e17055' : 
+                                           type === 'success' ? '#00b894' : '#74b9ff';
             log(message, type);
         }
         
@@ -425,6 +466,39 @@ async def home(request: Request):
                 status.className = 'connection-status disconnected';
                 indicator.classList.remove('active');
             }
+        }
+        
+        function updateVadStatus(status, hasSpeech = false) {
+            const vadStatus = document.getElementById('vadStatus');
+            const indicator = document.getElementById('realtimeIndicator');
+            
+            if (status === 'speech') {
+                vadStatus.textContent = 'Speaking';
+                vadStatus.className = 'vad-status vad-speech';
+                indicator.classList.add('speech');
+                indicator.classList.remove('active');
+            } else if (status === 'silence') {
+                vadStatus.textContent = 'Silent';
+                vadStatus.className = 'vad-status vad-silence';
+                indicator.classList.remove('speech');
+                if (isStreaming) indicator.classList.add('active');
+            } else if (status === 'processing') {
+                vadStatus.textContent = 'Processing';
+                vadStatus.className = 'vad-status vad-processing';
+            } else {
+                vadStatus.textContent = 'Waiting';
+                vadStatus.className = 'vad-status vad-silence';
+                indicator.classList.remove('speech', 'active');
+            }
+        }
+        
+        function updateVadStats() {
+            document.getElementById('speechChunks').textContent = speechChunks;
+            document.getElementById('silenceChunks').textContent = silenceChunks;
+            const total = speechChunks + silenceChunks;
+            const processingRate = total > 0 ? Math.round((speechChunks / total) * 100) : 0;
+            document.getElementById('processingRate').textContent = processingRate;
+            document.getElementById('silenceSkipped').textContent = silenceChunks;
         }
         
         async function connect() {
@@ -450,6 +524,7 @@ async def home(request: Request):
                 ws.onclose = (event) => {
                     updateStatus(`Disconnected from server (Code: ${event.code})`, 'error');
                     updateConnectionStatus(false);
+                    updateVadStatus('waiting');
                     document.getElementById('connectBtn').disabled = false;
                     document.getElementById('streamBtn').disabled = true;
                     document.getElementById('stopBtn').disabled = true;
@@ -459,6 +534,7 @@ async def home(request: Request):
                 ws.onerror = (error) => {
                     updateStatus('Connection error - check console for details', 'error');
                     updateConnectionStatus(false);
+                    updateVadStatus('waiting');
                     log('WebSocket error occurred');
                     console.error('WebSocket error:', error);
                 };
@@ -498,38 +574,63 @@ async def home(request: Request):
             const conversationDiv = document.getElementById('conversation');
             const contentDiv = document.getElementById('conversationContent');
             conversationDiv.style.display = 'block';
+            document.getElementById('vadStats').style.display = 'block';
             
-            // Create AI response message
             const timestamp = new Date().toLocaleTimeString();
-            const aiMessage = document.createElement('div');
-            aiMessage.className = 'message ai-message';
-            aiMessage.innerHTML = `
-                <div><strong>AI:</strong> ${data.text}</div>
-                <div class="timestamp">${timestamp} (${data.processing_time_ms}ms)</div>
-            `;
             
-            contentDiv.appendChild(aiMessage);
-            conversationDiv.scrollTop = conversationDiv.scrollHeight;
-            
-            // Update metrics
-            responseCount++;
-            if (data.processing_time_ms) {
-                latencySum += data.processing_time_ms;
-                const avgLatency = Math.round(latencySum / responseCount);
-                document.getElementById('latencyMetric').textContent = avgLatency;
+            // Check if this was a silence response (empty or skipped)
+            if (!data.text || data.text.trim() === '' || data.skipped_reason === 'no_speech_detected') {
+                silenceChunks++;
+                updateVadStatus('silence');
                 
-                // Show performance warning if latency is high
-                const warningDiv = document.getElementById('performanceWarning');
-                if (data.processing_time_ms > LATENCY_WARNING_THRESHOLD) {
-                    warningDiv.style.display = 'block';
-                } else if (avgLatency < LATENCY_WARNING_THRESHOLD) {
-                    warningDiv.style.display = 'none';
+                // Optionally show silence messages (uncomment if desired)
+                /*
+                const silenceMessage = document.createElement('div');
+                silenceMessage.className = 'message silence-message';
+                silenceMessage.innerHTML = `
+                    <div><em>🔇 Silence detected - no response needed</em></div>
+                    <div class="timestamp">${timestamp} (${data.processing_time_ms}ms)</div>
+                `;
+                contentDiv.appendChild(silenceMessage);
+                */
+            } else {
+                // This was a real speech response
+                speechChunks++;
+                responseCount++;
+                updateVadStatus('processing');
+                
+                const aiMessage = document.createElement('div');
+                aiMessage.className = 'message ai-message';
+                aiMessage.innerHTML = `
+                    <div><strong>AI:</strong> ${data.text}</div>
+                    <div class="timestamp">${timestamp} (${data.processing_time_ms}ms)</div>
+                `;
+                
+                contentDiv.appendChild(aiMessage);
+                conversationDiv.scrollTop = conversationDiv.scrollHeight;
+                
+                // Update metrics
+                if (data.processing_time_ms) {
+                    latencySum += data.processing_time_ms;
+                    const avgLatency = Math.round(latencySum / responseCount);
+                    document.getElementById('latencyMetric').textContent = avgLatency;
+                    
+                    // Show performance warning if latency is high
+                    const warningDiv = document.getElementById('performanceWarning');
+                    if (data.processing_time_ms > LATENCY_WARNING_THRESHOLD) {
+                        warningDiv.style.display = 'block';
+                    } else if (avgLatency < LATENCY_WARNING_THRESHOLD) {
+                        warningDiv.style.display = 'none';
+                    }
                 }
+                
+                setTimeout(() => updateVadStatus('silence'), 2000);
+                
+                log(`AI Response: "${data.text}" (${data.processing_time_ms}ms)`);
             }
             
-            document.getElementById('chunksMetric').textContent = responseCount;
-            
-            log(`AI Response: "${data.text}" (${data.processing_time_ms}ms)`);
+            document.getElementById('chunksMetric').textContent = speechChunks;
+            updateVadStats();
         }
         
         function updateStreamDuration() {
@@ -541,14 +642,11 @@ async def home(request: Request):
             }
         }
         
-        // CONVERSATIONAL AUDIO STREAMING FUNCTIONS
-        
         async function startConversation() {
             try {
-                log('Starting conversational audio streaming...');
+                log('Starting conversational audio streaming with VAD...');
                 updateStatus('Initializing microphone for conversation...', 'loading');
                 
-                // Request microphone access
                 mediaStream = await navigator.mediaDevices.getUserMedia({
                     audio: {
                         sampleRate: SAMPLE_RATE,
@@ -561,7 +659,6 @@ async def home(request: Request):
                 
                 log('Microphone access granted');
                 
-                // Create AudioContext
                 audioContext = new (window.AudioContext || window.webkitAudioContext)({
                     sampleRate: SAMPLE_RATE
                 });
@@ -569,15 +666,12 @@ async def home(request: Request):
                 await audioContext.resume();
                 log(`Audio context created with sample rate: ${audioContext.sampleRate}`);
                 
-                // Create ScriptProcessorNode for real-time audio processing
                 audioWorkletNode = audioContext.createScriptProcessor(CHUNK_SIZE, 1, 1);
                 const source = audioContext.createMediaStreamSource(mediaStream);
                 
-                // Connect audio processing chain
                 source.connect(audioWorkletNode);
                 audioWorkletNode.connect(audioContext.destination);
                 
-                // Real-time audio processing
                 let audioBuffer = [];
                 let lastChunkTime = Date.now();
                 
@@ -587,13 +681,11 @@ async def home(request: Request):
                     const inputBuffer = event.inputBuffer;
                     const inputData = inputBuffer.getChannelData(0);
                     
-                    // Update volume meter
+                    // Update volume meter and VAD indicator
                     updateVolumeMeter(inputData);
                     
-                    // Add audio to buffer
                     audioBuffer.push(...inputData);
                     
-                    // Send chunk every CHUNK_INTERVAL milliseconds
                     const now = Date.now();
                     if (now - lastChunkTime >= CHUNK_INTERVAL && audioBuffer.length > 0) {
                         sendAudioChunk(new Float32Array(audioBuffer));
@@ -602,20 +694,18 @@ async def home(request: Request):
                     }
                 };
                 
-                // Start streaming
                 isStreaming = true;
                 streamStartTime = Date.now();
                 
-                // Update UI
                 document.getElementById('streamBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
                 updateConnectionStatus(true, true);
-                updateStatus('🎙️ Conversation active - speak naturally!', 'success');
+                updateStatus('🎙️ Conversation active with VAD - speak naturally!', 'success');
+                updateVadStatus('silence');
                 
-                // Start duration timer
                 setInterval(updateStreamDuration, 1000);
                 
-                log('Conversational streaming started successfully');
+                log('Conversational streaming with VAD started successfully');
                 
             } catch (error) {
                 updateStatus('Failed to start conversation: ' + error.message, 'error');
@@ -644,28 +734,44 @@ async def home(request: Request):
                 mediaStream = null;
             }
             
-            // Update UI
             document.getElementById('streamBtn').disabled = false;
             document.getElementById('stopBtn').disabled = true;
             updateConnectionStatus(true, false);
             updateStatus('Conversation ended. Ready to start a new conversation.', 'info');
+            updateVadStatus('waiting');
             
-            // Reset volume meter
             document.getElementById('volumeBar').style.width = '0%';
+            document.getElementById('volumeBar').classList.remove('speech');
             
             log('Conversational streaming stopped');
         }
         
         function updateVolumeMeter(audioData) {
-            // Calculate RMS volume
             let sum = 0;
             for (let i = 0; i < audioData.length; i++) {
                 sum += audioData[i] * audioData[i];
             }
             const rms = Math.sqrt(sum / audioData.length);
-            const volume = Math.min(100, rms * 100 * 10); // Scale and limit to 100%
+            const volume = Math.min(100, rms * 100 * 10);
             
-            document.getElementById('volumeBar').style.width = volume + '%';
+            const volumeBar = document.getElementById('volumeBar');
+            volumeBar.style.width = volume + '%';
+            
+            // Simple client-side VAD indication based on volume
+            const now = Date.now();
+            if (volume > 5 && now - lastVadUpdate > 100) { // Throttle updates
+                updateVadStatus('speech');
+                volumeBar.classList.add('speech');
+                lastVadUpdate = now;
+                
+                // Reset to silence after 500ms of no update
+                setTimeout(() => {
+                    if (Date.now() - lastVadUpdate >= 400) {
+                        updateVadStatus('silence');
+                        volumeBar.classList.remove('speech');
+                    }
+                }, 500);
+            }
         }
         
         function sendAudioChunk(audioData) {
@@ -675,7 +781,6 @@ async def home(request: Request):
             }
             
             try {
-                // Convert Float32Array to base64
                 const base64Audio = arrayBufferToBase64(audioData.buffer);
                 
                 const message = {
@@ -696,7 +801,6 @@ async def home(request: Request):
             }
         }
         
-        // Helper function for base64 conversion
         function arrayBufferToBase64(buffer) {
             const bytes = new Uint8Array(buffer);
             let binary = '';
@@ -713,8 +817,8 @@ async def home(request: Request):
         // Initialize on page load
         window.addEventListener('load', () => {
             detectEnvironment();
-            updateStatus('Ready to connect for conversation');
-            log('Conversational application initialized');
+            updateStatus('Ready to connect for conversation with VAD');
+            log('Conversational application with VAD initialized');
         });
         
         // Cleanup on page unload
@@ -746,7 +850,7 @@ async def api_status():
                 "sample_rate": config.audio.sample_rate,
                 "tcp_ports": config.server.tcp_ports,
                 "latency_target": config.streaming.latency_target_ms,
-                "mode": "conversational_optimized"
+                "mode": "conversational_optimized_with_vad"
             }
         })
     except Exception as e:
@@ -756,10 +860,10 @@ async def api_status():
             "error": str(e)
         }, status_code=500)
 
-# WebSocket endpoint for CONVERSATIONAL streaming
+# WebSocket endpoint for CONVERSATIONAL streaming with VAD
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for CONVERSATIONAL audio streaming"""
+    """WebSocket endpoint for CONVERSATIONAL audio streaming with VAD"""
     await websocket.accept()
     client_id = f"{websocket.client.host}:{websocket.client.port}"
     streaming_logger.info(f"[CONVERSATION] Client connected: {client_id}")
@@ -769,18 +873,18 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.send_text(json.dumps({
             "type": "connection",
             "status": "connected",
-            "message": "Connected to Voxtral conversational AI",
+            "message": "Connected to Voxtral conversational AI with VAD",
             "server_config": {
                 "sample_rate": config.audio.sample_rate,
                 "chunk_size": config.audio.chunk_size,
                 "latency_target": config.streaming.latency_target_ms,
-                "streaming_mode": "conversational_optimized"
+                "streaming_mode": "conversational_optimized_with_vad",
+                "vad_enabled": True
             }
         }))
         
         while True:
             try:
-                # Receive message with timeout to handle disconnections better
                 data = await asyncio.wait_for(websocket.receive_text(), timeout=300.0)
                 message = json.loads(data)
                 msg_type = message.get("type")
@@ -788,7 +892,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 streaming_logger.debug(f"[CONVERSATION] Received message type: {msg_type} from {client_id}")
                 
                 if msg_type == "audio_chunk":
-                    # Handle conversational audio chunk
                     await handle_conversational_audio_chunk(websocket, message, client_id)
                     
                 elif msg_type == "ping":
@@ -807,10 +910,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     
                 else:
                     streaming_logger.warning(f"[CONVERSATION] Unknown message type: {msg_type}")
-                    await websocket.send_text(json.dumps({
-                        "type": "error",
-                        "message": f"Unknown message type: {msg_type}"
-                    }))
                     
             except asyncio.TimeoutError:
                 streaming_logger.info(f"[CONVERSATION] Client {client_id} timeout - sending ping")
@@ -823,71 +922,50 @@ async def websocket_endpoint(websocket: WebSocket):
         streaming_logger.info(f"[CONVERSATION] Client disconnected: {client_id}")
     except Exception as e:
         streaming_logger.error(f"[CONVERSATION] WebSocket error for {client_id}: {e}")
-        try:
-            await websocket.send_text(json.dumps({
-                "type": "error",
-                "message": f"Server error: {str(e)}"
-            }))
-        except:
-            pass
 
 async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, client_id: str):
-    """Process conversational audio chunks as they arrive"""
+    """Process conversational audio chunks with VAD"""
     try:
         chunk_start_time = time.time()
         chunk_id = data.get("chunk_id", 0)
         
         streaming_logger.info(f"[CONVERSATION] Processing chunk {chunk_id} for {client_id}")
         
-        # Get models with lazy initialization
         voxtral_model = get_voxtral_model()
         audio_processor = get_audio_processor()
         
-        # Initialize model if needed (first time use)
         if not voxtral_model.is_initialized:
             streaming_logger.info(f"[CONVERSATION] Initializing Voxtral model for {client_id}")
             await websocket.send_text(json.dumps({
                 "type": "info",
-                "message": "Loading conversational AI... This may take 30+ seconds"
+                "message": "Loading conversational AI with VAD... This may take 30+ seconds"
             }))
             await voxtral_model.initialize()
             streaming_logger.info(f"[CONVERSATION] Model initialized for {client_id}")
         
-        # Extract and validate audio data
         audio_b64 = data.get("audio_data")
         if not audio_b64:
-            streaming_logger.warning(f"[CONVERSATION] No audio data in chunk {chunk_id}")
-            return  # Skip empty chunks silently
+            return
         
-        # Decode base64 audio
         try:
             audio_bytes = base64.b64decode(audio_b64)
             audio_array = np.frombuffer(audio_bytes, dtype=np.float32)
-            streaming_logger.debug(f"[CONVERSATION] Decoded {len(audio_array)} audio samples from chunk {chunk_id}")
         except Exception as e:
             streaming_logger.error(f"[CONVERSATION] Audio decoding error for chunk {chunk_id}: {e}")
-            return  # Skip corrupted chunks silently
+            return
         
-        # Validate audio format (more lenient for conversation)
         if not audio_processor.validate_realtime_chunk(audio_array, chunk_id):
-            streaming_logger.debug(f"[CONVERSATION] Skipping invalid audio chunk {chunk_id}")
-            return  # Skip invalid chunks silently
+            return
         
-        # Preprocess audio
         try:
             audio_tensor = audio_processor.preprocess_realtime_chunk(audio_array, chunk_id)
-            streaming_logger.debug(f"[CONVERSATION] Preprocessed audio tensor shape: {audio_tensor.shape}")
         except Exception as e:
             streaming_logger.error(f"[CONVERSATION] Audio preprocessing error for chunk {chunk_id}: {e}")
-            return  # Skip preprocessing errors silently
+            return
         
-        # Get processing parameters
         mode = data.get("mode", "transcribe")
         prompt = data.get("prompt", "")
         
-        streaming_logger.debug(f"[CONVERSATION] Processing chunk {chunk_id} in mode '{mode}'")
-        
-        # Process with Voxtral using optimized method
         try:
             result = await voxtral_model.process_realtime_chunk(
                 audio_tensor, 
@@ -900,38 +978,34 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
                 response = result['response']
                 processing_time = result['processing_time_ms']
                 
-                streaming_logger.info(f"[CONVERSATION] Chunk {chunk_id} processed in {processing_time:.1f}ms: '{response[:50]}...'")
+                # Send response regardless of whether it's empty (VAD handled it)
+                await websocket.send_text(json.dumps({
+                    "type": "response",
+                    "mode": mode,
+                    "text": response,
+                    "chunk_id": chunk_id,
+                    "processing_time_ms": round(processing_time, 1),
+                    "audio_duration_ms": len(audio_array) / config.audio.sample_rate * 1000,
+                    "timestamp": data.get("timestamp", time.time()),
+                    "skipped_reason": result.get('skipped_reason', None),
+                    "had_speech": result.get('had_speech', True)
+                }))
                 
-                # Send response only if we have meaningful content
-                if response and response.strip() and len(response.strip()) > 2:
-                    await websocket.send_text(json.dumps({
-                        "type": "response",
-                        "mode": mode,
-                        "text": response,
-                        "chunk_id": chunk_id,
-                        "processing_time_ms": round(processing_time, 1),
-                        "audio_duration_ms": len(audio_array) / config.audio.sample_rate * 1000,
-                        "timestamp": data.get("timestamp", time.time())
-                    }))
-                    
-                    streaming_logger.info(f"[CONVERSATION] Response sent for chunk {chunk_id} to {client_id}")
+                if response and response.strip():
+                    streaming_logger.info(f"[CONVERSATION] Response sent for chunk {chunk_id}: '{response[:50]}...'")
                 else:
-                    streaming_logger.debug(f"[CONVERSATION] Skipping empty response for chunk {chunk_id}")
-                    
+                    streaming_logger.info(f"[CONVERSATION] Silence detected for chunk {chunk_id} - no response needed")
             else:
-                streaming_logger.warning(f"[CONVERSATION] Processing failed for chunk {chunk_id}: {result.get('error', 'Unknown error')}")
+                streaming_logger.warning(f"[CONVERSATION] Processing failed for chunk {chunk_id}")
                 
         except Exception as e:
             streaming_logger.error(f"[CONVERSATION] Voxtral processing error for chunk {chunk_id}: {e}")
-            # Don't send error messages to user - just log and continue
         
     except Exception as e:
         streaming_logger.error(f"[CONVERSATION] Error handling audio chunk: {e}")
-        # Don't send error messages to user for better UX
 
-# FIXED: Add proper main execution block
 if __name__ == "__main__":
-    streaming_logger.info("Starting Voxtral Conversational Streaming UI Server")
+    streaming_logger.info("Starting Voxtral Conversational Streaming UI Server with VAD")
     uvicorn.run(
         app,
         host=config.server.host,
