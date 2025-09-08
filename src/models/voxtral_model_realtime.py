@@ -1,6 +1,6 @@
 """
-OPTIMIZED Voxtral model wrapper for CONVERSATIONAL real-time streaming
-Fixed prompt engineering and performance optimization
+FIXED Voxtral model wrapper for CONVERSATIONAL real-time streaming
+RESOLVED FlashAttention2 issues with proper fallback to eager attention
 """
 import torch
 import asyncio
@@ -32,7 +32,7 @@ realtime_logger = logging.getLogger("voxtral_realtime")
 realtime_logger.setLevel(logging.DEBUG)
 
 class VoxtralModel:
-    """OPTIMIZED Voxtral model for conversational real-time streaming"""
+    """FIXED Voxtral model for conversational real-time streaming with FlashAttention fallback"""
     
     def __init__(self):
         self.model = None
@@ -58,9 +58,34 @@ class VoxtralModel:
             self.audio_processor = AudioProcessor()
             realtime_logger.info("Audio processor lazy-loaded into Voxtral model")
         return self.audio_processor
+    
+    def _determine_attention_implementation(self):
+        """
+        FIXED: Determine the best available attention implementation with proper fallback
+        """
+        try:
+            # First, try to import flash_attn to see if it's available
+            import flash_attn
+            realtime_logger.info("✅ FlashAttention2 is available")
+            
+            # Check if CUDA is available
+            if self.device == "cuda" and torch.cuda.is_available():
+                realtime_logger.info("🚀 Using FlashAttention2 for optimal performance")
+                return "flash_attention_2"
+            else:
+                realtime_logger.info("💡 CUDA not available, falling back to eager attention")
+                return "eager"
+                
+        except ImportError:
+            realtime_logger.warning("⚠️ FlashAttention2 not installed, using eager attention")
+            realtime_logger.info("💡 To install FlashAttention2: pip install flash-attn --no-build-isolation")
+            return "eager"
+        except Exception as e:
+            realtime_logger.warning(f"⚠️ FlashAttention2 import failed: {e}")
+            return "eager"
         
     async def initialize(self):
-        """Initialize the Voxtral model with real-time optimizations"""
+        """Initialize the Voxtral model with FIXED attention implementation handling"""
         try:
             realtime_logger.info("🚀 Starting Voxtral model initialization for conversational streaming...")
             start_time = time.time()
@@ -73,27 +98,54 @@ class VoxtralModel:
             )
             realtime_logger.info("✅ AutoProcessor loaded successfully")
             
-            # Load model with OPTIMIZED settings for conversation
+            # FIXED: Determine attention implementation with proper fallback
+            attn_implementation = self._determine_attention_implementation()
+            realtime_logger.info(f"🔧 Using attention implementation: {attn_implementation}")
+            
+            # Load model with FIXED attention settings
             realtime_logger.info(f"📥 Loading Voxtral model from {config.model.name}")
-            self.model = VoxtralForConditionalGeneration.from_pretrained(
-                config.model.name,
-                cache_dir=config.model.cache_dir,
-                torch_dtype=self.torch_dtype,
-                device_map="auto",
-                low_cpu_mem_usage=True,
-                trust_remote_code=True,
-                # OPTIMIZATION: Use 8-bit inference for speed
-                load_in_8bit=False,  # Keep at bfloat16 for better quality
-                attn_implementation="flash_attention_2" if torch.cuda.is_available() else "eager"
-            )
-            realtime_logger.info("✅ Voxtral model loaded successfully")
+            
+            model_kwargs = {
+                "cache_dir": config.model.cache_dir,
+                "torch_dtype": self.torch_dtype,
+                "device_map": "auto",
+                "low_cpu_mem_usage": True,
+                "trust_remote_code": True,
+                "attn_implementation": attn_implementation  # FIXED: Use determined implementation
+            }
+            
+            # Only add load_in_8bit if using CUDA
+            if self.device == "cuda":
+                model_kwargs["load_in_8bit"] = False  # Keep at bfloat16 for better quality
+            
+            try:
+                self.model = VoxtralForConditionalGeneration.from_pretrained(
+                    config.model.name,
+                    **model_kwargs
+                )
+                realtime_logger.info(f"✅ Voxtral model loaded successfully with {attn_implementation} attention")
+                
+            except Exception as model_load_error:
+                # FIXED: If model loading fails, try with eager attention as final fallback
+                if attn_implementation != "eager":
+                    realtime_logger.warning(f"⚠️ Model loading with {attn_implementation} failed: {model_load_error}")
+                    realtime_logger.info("🔄 Retrying with eager attention as fallback...")
+                    
+                    model_kwargs["attn_implementation"] = "eager"
+                    self.model = VoxtralForConditionalGeneration.from_pretrained(
+                        config.model.name,
+                        **model_kwargs
+                    )
+                    realtime_logger.info("✅ Voxtral model loaded successfully with eager attention fallback")
+                else:
+                    raise model_load_error
             
             # Set model to evaluation mode for inference
             self.model.eval()
             realtime_logger.info("🔧 Model set to evaluation mode")
             
-            # Enable real-time optimizations
-            if hasattr(torch, 'compile') and self.device == "cuda":
+            # FIXED: Only try torch.compile if available and using CUDA
+            if hasattr(torch, 'compile') and self.device == "cuda" and attn_implementation != "flash_attention_2":
                 try:
                     realtime_logger.info("⚡ Attempting to compile model with torch.compile()...")
                     # Use faster compilation mode for real-time
@@ -101,6 +153,8 @@ class VoxtralModel:
                     realtime_logger.info("✅ Model compiled successfully for faster inference")
                 except Exception as e:
                     realtime_logger.warning(f"⚠️ Could not compile model: {e}")
+            else:
+                realtime_logger.info("💡 Skipping torch.compile (using FlashAttention2 or not on CUDA)")
             
             # SKIP warmup for faster startup
             realtime_logger.info("⚡ Skipping warmup for faster conversational startup")
@@ -111,6 +165,9 @@ class VoxtralModel:
             
         except Exception as e:
             realtime_logger.error(f"❌ Failed to initialize Voxtral model: {e}")
+            # Print detailed error for debugging
+            import traceback
+            realtime_logger.error(f"❌ Full error traceback: {traceback.format_exc()}")
             raise
     
     async def process_realtime_chunk(self, audio_data: torch.Tensor, chunk_id: int, mode: str = "transcribe", prompt: str = "") -> Dict[str, Any]:
@@ -259,6 +316,8 @@ class VoxtralModel:
                 error_msg = "GPU memory error"
             elif "timeout" in str(e).lower():
                 error_msg = "Processing timeout"
+            elif "flash" in str(e).lower():
+                error_msg = "FlashAttention error - using fallback"
             
             return {
                 'response': error_msg,
@@ -267,7 +326,7 @@ class VoxtralModel:
                 'success': False,
                 'error': str(e)
             }
-    
+
     async def transcribe_audio(self, audio_data: torch.Tensor) -> str:
         """Fast transcription for conversational chunks"""
         result = await self.process_realtime_chunk(
