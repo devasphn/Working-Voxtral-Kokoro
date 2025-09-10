@@ -49,10 +49,10 @@ class VoxtralModel:
         self.device = config.model.device
         self.torch_dtype = getattr(torch, config.model.torch_dtype)
         
-        # ENHANCED VAD and silence detection settings - Reduced sensitivity
-        self.silence_threshold = 0.05  # Increased minimum energy threshold for speech
-        self.min_speech_duration = 0.8  # Increased minimum duration (seconds) to consider as speech
-        self.max_silence_duration = 1.5  # Reduced silence duration for faster end-of-speech detection
+        # CALIBRATED VAD and silence detection settings - Perfectly aligned with AudioProcessor
+        self.silence_threshold = 0.015  # Aligned with AudioProcessor threshold for perfect compatibility
+        self.min_speech_duration = 0.4  # Aligned with AudioProcessor minimum duration (400ms)
+        self.max_silence_duration = 1.2  # Aligned with AudioProcessor silence duration (1200ms)
         
         # Performance optimization flags
         self.use_torch_compile = False  # Disabled by default for stability

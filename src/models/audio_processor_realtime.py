@@ -38,14 +38,14 @@ class AudioProcessor:
         # Real-time processing metrics
         self.processing_history = deque(maxlen=100)
         self.chunk_counter = 0
-        
-        # ENHANCED VAD SETTINGS - Reduced sensitivity to prevent false triggers
-        self.vad_threshold = 0.01            # Increased RMS threshold for voice detection
-        self.min_voice_duration_ms = 500     # Minimum 500ms of voice to trigger (increased)
-        self.min_silence_duration_ms = 1500  # Minimum 1.5s silence to ignore (increased)
-        self.energy_threshold = 5e-6         # Increased energy threshold for voice activity
-        self.zero_crossing_threshold = 0.15  # Increased zero crossing rate threshold
-        self.spectral_centroid_threshold = 1000  # Spectral centroid threshold for speech detection
+
+        # CALIBRATED VAD SETTINGS - Optimized for normal speech (RMS ~0.03-0.04)
+        self.vad_threshold = 0.015           # Calibrated RMS threshold for normal conversational speech
+        self.min_voice_duration_ms = 400     # Minimum 400ms of voice to trigger
+        self.min_silence_duration_ms = 1200  # Minimum 1.2s silence to ignore
+        self.energy_threshold = 3e-6         # Energy threshold for voice activity
+        self.zero_crossing_threshold = 0.2   # Zero crossing rate threshold
+        self.spectral_centroid_threshold = 400  # Lowered spectral centroid threshold for speech detection
         
         # Silence detection counters
         self.consecutive_silent_chunks = 0
@@ -71,7 +71,7 @@ class AudioProcessor:
             norm='slaney',
             mel_scale='htk'
         )
-        
+
         audio_logger.info(f"🔊 AudioProcessor initialized for PRODUCTION real-time streaming:")
         audio_logger.info(f"   📊 Sample rate: {self.sample_rate} Hz")
         audio_logger.info(f"   🎵 Mel bins: {self.n_mels}")
@@ -126,28 +126,28 @@ class AudioProcessor:
             # Tertiary check: Not too noisy (reasonable ZCR)
             zcr_check = zcr < self.zero_crossing_threshold
             
-            # Quaternary check: Has meaningful amplitude (increased threshold)
-            amplitude_check = max_amplitude > 0.002  # Increased from 0.0005
+            # Quaternary check: Has meaningful amplitude (calibrated for normal speech)
+            amplitude_check = max_amplitude > 0.005  # Calibrated for normal speech levels
 
-            # NEW: Spectral centroid check for speech-like characteristics
+            # NEW: Spectral centroid check for speech-like characteristics (more permissive)
             spectral_check = spectral_centroid > self.spectral_centroid_threshold
 
-            # Combine checks with weighting - now requires more checks to pass
-            primary_checks = [rms_check, energy_check, amplitude_check, spectral_check]
+            # Combine checks with weighting - optimized for normal speech detection
+            primary_checks = [rms_check, energy_check, amplitude_check]
             passed_primary_checks = sum(primary_checks)
 
-            # Voice detected if at least 3/4 primary checks pass (more restrictive)
-            if passed_primary_checks >= 3:
+            # Voice detected if at least 2/3 primary checks pass + spectral check OR 3/3 primary checks
+            if (passed_primary_checks >= 2 and spectral_check) or passed_primary_checks >= 3:
                 has_voice = True
-                confidence = passed_primary_checks / 4.0
+                confidence = (passed_primary_checks + (1 if spectral_check else 0)) / 4.0
 
-                # Boost confidence if ZCR also passes
+                # Boost confidence if ZCR also passes (not too noisy)
                 if zcr_check:
-                    confidence = min(1.0, confidence + 0.15)
-
-                # Additional boost for strong spectral centroid
-                if spectral_centroid > 2000:  # Strong speech characteristics
                     confidence = min(1.0, confidence + 0.1)
+
+                # Additional boost for strong spectral centroid (clear speech)
+                if spectral_centroid > 1000:  # Clear speech characteristics
+                    confidence = min(1.0, confidence + 0.15)
             
             # Update consecutive counters for stability
             if has_voice:
@@ -180,7 +180,7 @@ class AudioProcessor:
                 "zero_crossing_rate": zcr,
                 "max_amplitude": max_amplitude,
                 "spectral_centroid": spectral_centroid,
-                "checks_passed": passed_checks,
+                "checks_passed": passed_primary_checks,
                 "consecutive_voice_chunks": self.consecutive_voice_chunks,
                 "consecutive_silent_chunks": self.consecutive_silent_chunks,
                 "voice_duration_ms": voice_duration_ms,
@@ -204,7 +204,7 @@ class AudioProcessor:
                 "confidence": 0.0,
                 "error": str(e)
             }
-    
+
     def preprocess_realtime_chunk(self, audio_data: np.ndarray, chunk_id: int = None, sample_rate: Optional[int] = None) -> torch.Tensor:
         """
         Enhanced preprocessing specifically optimized for real-time audio chunks
@@ -450,25 +450,25 @@ class AudioProcessor:
             sensitivity: "low" (noisy), "medium" (normal), "high" (quiet)
         """
         if sensitivity == "low":  # Noisy environment - most restrictive
-            self.vad_threshold = 0.02
-            self.energy_threshold = 1e-5
-            self.min_voice_duration_ms = 800
-            self.spectral_centroid_threshold = 1500
+            self.vad_threshold = 0.025
+            self.energy_threshold = 8e-6
+            self.min_voice_duration_ms = 600
+            self.spectral_centroid_threshold = 600
             audio_logger.info("🔊 VAD sensitivity set to LOW (noisy environment)")
 
         elif sensitivity == "high":  # Quiet environment - more sensitive
-            self.vad_threshold = 0.005
-            self.energy_threshold = 2e-6
-            self.min_voice_duration_ms = 300
-            self.spectral_centroid_threshold = 800
+            self.vad_threshold = 0.008
+            self.energy_threshold = 1e-6
+            self.min_voice_duration_ms = 250
+            self.spectral_centroid_threshold = 200
             audio_logger.info("🔇 VAD sensitivity set to HIGH (quiet environment)")
 
-        else:  # Medium (default) - balanced for most environments
-            self.vad_threshold = 0.01
-            self.energy_threshold = 5e-6
-            self.min_voice_duration_ms = 500
-            self.spectral_centroid_threshold = 1000
-            audio_logger.info("🎙️ VAD sensitivity set to MEDIUM (normal environment)")
+        else:  # Medium (default) - calibrated for normal speech (RMS ~0.03-0.04)
+            self.vad_threshold = 0.015
+            self.energy_threshold = 3e-6
+            self.min_voice_duration_ms = 400
+            self.spectral_centroid_threshold = 400
+            audio_logger.info("🎙️ VAD sensitivity set to MEDIUM (normal environment - calibrated for RMS ~0.03)")
     
     # Legacy methods for backward compatibility
     def preprocess_audio(self, audio_data: np.ndarray, sample_rate: Optional[int] = None) -> torch.Tensor:
