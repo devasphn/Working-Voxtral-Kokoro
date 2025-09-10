@@ -40,6 +40,9 @@ streaming_logger.setLevel(logging.DEBUG)
 _voxtral_model = None
 _audio_processor = None
 
+# Response deduplication tracking
+recent_responses = {}  # client_id -> last_response_text
+
 def get_voxtral_model():
     """Lazy initialization of Voxtral model"""
     global _voxtral_model
@@ -405,15 +408,47 @@ async def home(request: Request):
         let speechChunks = 0;
         let silenceChunks = 0;
         let lastVadUpdate = 0;
+
+        // Enhanced continuous speech buffering variables
+        let continuousAudioBuffer = [];
+        let speechStartTime = null;
+        let lastSpeechTime = null;
+        let isSpeechActive = false;
+        let silenceStartTime = null;
+        let pendingResponse = false;
+        let lastResponseText = '';  // For deduplication
         
-        // Optimized configuration
+        // Enhanced configuration for continuous speech capture
         const CHUNK_SIZE = 4096;
-        const CHUNK_INTERVAL = 1000;
+        const CHUNK_INTERVAL = 100;  // Reduced for more responsive VAD (was 1000ms)
         const SAMPLE_RATE = 16000;
         const LATENCY_WARNING_THRESHOLD = 1000;
+        const SILENCE_THRESHOLD = 0.01;  // RMS threshold for speech detection
+        const MIN_SPEECH_DURATION = 500;  // Minimum speech duration in ms
+        const END_OF_SPEECH_SILENCE = 1500;  // Silence duration to trigger processing (ms)
         
         function log(message, type = 'info') {
             console.log(`[Voxtral VAD] ${message}`);
+        }
+
+        // Enhanced VAD function for continuous speech detection
+        function detectSpeechInBuffer(audioData) {
+            if (!audioData || audioData.length === 0) return false;
+
+            // Calculate RMS energy
+            let sum = 0;
+            for (let i = 0; i < audioData.length; i++) {
+                sum += audioData[i] * audioData[i];
+            }
+            const rms = Math.sqrt(sum / audioData.length);
+
+            // Calculate max amplitude
+            const maxAmplitude = Math.max(...audioData.map(Math.abs));
+
+            // Speech detected if both RMS and amplitude exceed thresholds
+            const hasSpeech = rms > SILENCE_THRESHOLD && maxAmplitude > 0.002;
+
+            return hasSpeech;
         }
         
         // Detect environment and construct WebSocket URL
@@ -551,7 +586,17 @@ async def home(request: Request):
                     break;
                     
                 case 'response':
-                    displayConversationMessage(data);
+                    // Check for response deduplication
+                    if (data.text && data.text.trim() !== '' && data.text !== lastResponseText) {
+                        displayConversationMessage(data);
+                        lastResponseText = data.text;
+                        log(`Received unique response: "${data.text.substring(0, 50)}..."`);
+                    } else if (data.text === lastResponseText) {
+                        log('Duplicate response detected - skipping display');
+                    }
+
+                    // Reset pending response flag to allow new speech processing
+                    pendingResponse = false;
                     break;
                     
                 case 'error':
@@ -671,23 +716,64 @@ async def home(request: Request):
                 
                 let audioBuffer = [];
                 let lastChunkTime = Date.now();
-                
+
                 audioWorkletNode.onaudioprocess = (event) => {
-                    if (!isStreaming) return;
-                    
+                    if (!isStreaming || pendingResponse) return;
+
                     const inputBuffer = event.inputBuffer;
                     const inputData = inputBuffer.getChannelData(0);
-                    
+
                     // Update volume meter and VAD indicator
                     updateVolumeMeter(inputData);
-                    
-                    audioBuffer.push(...inputData);
-                    
+
+                    // Add to continuous buffer
+                    continuousAudioBuffer.push(...inputData);
+
+                    // Detect speech in current chunk
+                    const hasSpeech = detectSpeechInBuffer(inputData);
                     const now = Date.now();
-                    if (now - lastChunkTime >= CHUNK_INTERVAL && audioBuffer.length > 0) {
-                        sendAudioChunk(new Float32Array(audioBuffer));
-                        audioBuffer = [];
-                        lastChunkTime = now;
+
+                    if (hasSpeech) {
+                        if (!isSpeechActive) {
+                            // Speech started
+                            speechStartTime = now;
+                            isSpeechActive = true;
+                            silenceStartTime = null;
+                            log('Speech detected - starting continuous capture');
+                            updateVadStatus('speech');
+                        }
+                        lastSpeechTime = now;
+                    } else {
+                        if (isSpeechActive && !silenceStartTime) {
+                            // Silence started after speech
+                            silenceStartTime = now;
+                            updateVadStatus('silence');
+                        }
+                    }
+
+                    // Check if we should process accumulated speech
+                    if (isSpeechActive && silenceStartTime &&
+                        (now - silenceStartTime >= END_OF_SPEECH_SILENCE) &&
+                        (lastSpeechTime - speechStartTime >= MIN_SPEECH_DURATION)) {
+
+                        // Process the complete utterance
+                        log(`Processing complete utterance: ${continuousAudioBuffer.length} samples, ${(lastSpeechTime - speechStartTime)}ms duration`);
+                        sendCompleteUtterance(new Float32Array(continuousAudioBuffer));
+
+                        // Reset for next utterance
+                        continuousAudioBuffer = [];
+                        isSpeechActive = false;
+                        speechStartTime = null;
+                        lastSpeechTime = null;
+                        silenceStartTime = null;
+                        pendingResponse = true;  // Prevent processing until response received
+                    }
+
+                    // Prevent buffer from growing too large (max 30 seconds)
+                    const maxBufferSize = SAMPLE_RATE * 30;
+                    if (continuousAudioBuffer.length > maxBufferSize) {
+                        continuousAudioBuffer = continuousAudioBuffer.slice(-maxBufferSize);
+                        log('Audio buffer trimmed to prevent memory overflow');
                     }
                 };
                 
@@ -771,15 +857,15 @@ async def home(request: Request):
             }
         }
         
-        function sendAudioChunk(audioData) {
+        function sendCompleteUtterance(audioData) {
             if (!ws || ws.readyState !== WebSocket.OPEN) {
                 log('Cannot send audio - WebSocket not connected');
                 return;
             }
-            
+
             try {
                 const base64Audio = arrayBufferToBase64(audioData.buffer);
-                
+
                 const message = {
                     type: 'audio_chunk',
                     audio_data: base64Audio,
@@ -975,24 +1061,33 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
             if result['success']:
                 response = result['response']
                 processing_time = result['processing_time_ms']
-                
-                # Send response regardless of whether it's empty (VAD handled it)
-                await websocket.send_text(json.dumps({
-                    "type": "response",
-                    "mode": mode,
-                    "text": response,
-                    "chunk_id": chunk_id,
-                    "processing_time_ms": round(processing_time, 1),
-                    "audio_duration_ms": len(audio_array) / config.audio.sample_rate * 1000,
-                    "timestamp": data.get("timestamp", time.time()),
-                    "skipped_reason": result.get('skipped_reason', None),
-                    "had_speech": result.get('had_speech', True)
-                }))
-                
-                if response and response.strip():
-                    streaming_logger.info(f"[CONVERSATION] Response sent for chunk {chunk_id}: '{response[:50]}...'")
+
+                # Check for response deduplication
+                last_response = recent_responses.get(client_id, "")
+                is_duplicate = response and response.strip() and response == last_response
+
+                if not is_duplicate:
+                    # Send response only if it's not a duplicate
+                    await websocket.send_text(json.dumps({
+                        "type": "response",
+                        "mode": mode,
+                        "text": response,
+                        "chunk_id": chunk_id,
+                        "processing_time_ms": round(processing_time, 1),
+                        "audio_duration_ms": len(audio_array) / config.audio.sample_rate * 1000,
+                        "timestamp": data.get("timestamp", time.time()),
+                        "skipped_reason": result.get('skipped_reason', None),
+                        "had_speech": result.get('had_speech', True)
+                    }))
+
+                    # Update recent response tracking
+                    if response and response.strip():
+                        recent_responses[client_id] = response
+                        streaming_logger.info(f"[CONVERSATION] Unique response sent for chunk {chunk_id}: '{response[:50]}...'")
+                    else:
+                        streaming_logger.info(f"[CONVERSATION] Silence detected for chunk {chunk_id} - no response needed")
                 else:
-                    streaming_logger.info(f"[CONVERSATION] Silence detected for chunk {chunk_id} - no response needed")
+                    streaming_logger.info(f"[CONVERSATION] Duplicate response detected for chunk {chunk_id} - skipping")
             else:
                 streaming_logger.warning(f"[CONVERSATION] Processing failed for chunk {chunk_id}")
                 

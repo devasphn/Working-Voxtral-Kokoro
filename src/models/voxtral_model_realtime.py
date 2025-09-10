@@ -49,10 +49,10 @@ class VoxtralModel:
         self.device = config.model.device
         self.torch_dtype = getattr(torch, config.model.torch_dtype)
         
-        # VAD and silence detection settings
-        self.silence_threshold = 0.01  # Minimum energy threshold for speech
-        self.min_speech_duration = 0.5  # Minimum duration (seconds) to consider as speech
-        self.max_silence_duration = 2.0  # Maximum silence before stopping response
+        # ENHANCED VAD and silence detection settings - Reduced sensitivity
+        self.silence_threshold = 0.05  # Increased minimum energy threshold for speech
+        self.min_speech_duration = 0.8  # Increased minimum duration (seconds) to consider as speech
+        self.max_silence_duration = 1.5  # Reduced silence duration for faster end-of-speech detection
         
         # Performance optimization flags
         self.use_torch_compile = False  # Disabled by default for stability
@@ -300,18 +300,19 @@ class VoxtralModel:
                         realtime_logger.debug(f"🚀 Starting inference for chunk {chunk_id}")
                         inference_start = time.time()
                         
-                        # PRODUCTION: Generate response with optimized settings
+                        # ENHANCED: Generate response with Voxtral-optimized settings
                         with torch.no_grad():
                             # Use mixed precision for speed
                             with torch.autocast(device_type="cuda" if "cuda" in self.device else "cpu", dtype=self.torch_dtype):
                                 outputs = self.model.generate(
                                     **inputs,
-                                    max_new_tokens=25,      # Reduced for speed
-                                    min_new_tokens=1,       # At least some response
-                                    do_sample=False,        # Greedy decoding for speed
-                                    num_beams=1,           # No beam search for speed
-                                    temperature=1.0,
-                                    repetition_penalty=1.0,
+                                    max_new_tokens=200,     # Increased for complete responses (was 25)
+                                    min_new_tokens=5,       # Ensure meaningful response
+                                    do_sample=True,         # Enable sampling for more natural responses
+                                    num_beams=1,           # Keep single beam for speed
+                                    temperature=0.2,       # Voxtral-recommended temperature for conversation
+                                    top_p=0.95,           # Voxtral-recommended top_p for conversation
+                                    repetition_penalty=1.1, # Slight penalty to avoid repetition
                                     pad_token_id=self.processor.tokenizer.eos_token_id if hasattr(self.processor, 'tokenizer') else None,
                                     use_cache=True,         # Use KV cache for speed
                                     # Remove early_stopping as it's not a valid parameter
