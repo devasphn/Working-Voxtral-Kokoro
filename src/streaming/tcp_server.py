@@ -201,9 +201,9 @@ class TCPStreamingServer:
                 })
                 return
             
-            # Get processing parameters
-            mode = data.get("mode", "transcribe")
-            prompt = data.get("prompt", "")
+            # Smart Conversation Mode - unified processing
+            mode = "conversation"  # Always use conversation mode
+            prompt = ""  # Prompt is hardcoded in the model
             
             # Process with Voxtral
             try:

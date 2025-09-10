@@ -20,15 +20,17 @@ export TOKENIZERS_PARALLELISM=false
 export TORCH_COMPILE_DEBUG=0
 
 # CRITICAL: Set Python path to current directory so 'src' module can be found
-export PYTHONPATH="/workspace/Voxtral-Final:$PYTHONPATH"
+CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PYTHONPATH="$CURRENT_DIR:$PYTHONPATH"
 
 echo "🔧 Environment variables and Python path set for conversational performance"
 echo "📁 PYTHONPATH: $PYTHONPATH"
+echo "📁 Current directory: $CURRENT_DIR"
 
 # Create log directory with enhanced structure
-mkdir -p /workspace/logs/conversational
-mkdir -p /workspace/logs/audio
-mkdir -p /workspace/logs/model
+mkdir -p "$CURRENT_DIR/logs/conversational"
+mkdir -p "$CURRENT_DIR/logs/audio"
+mkdir -p "$CURRENT_DIR/logs/model"
 
 # Check FlashAttention2 availability (FIXED detection)
 echo "🔍 Checking FlashAttention2 availability..."
@@ -176,10 +178,10 @@ echo "  ❤️  Health Check:       https://[POD_ID]-8005.proxy.runpod.net/healt
 echo ""
 echo "📝 Log Files:"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  📄 Main Logs:        /workspace/logs/voxtral_streaming.log"
-echo "  🗣️  Conversation Logs: /workspace/logs/conversational/"
-echo "  🎵 Audio Logs:       /workspace/logs/audio/"
-echo "  🤖 Model Logs:       /workspace/logs/model/"
+echo "  📄 Main Logs:        $CURRENT_DIR/logs/voxtral_streaming.log"
+echo "  🗣️  Conversation Logs: $CURRENT_DIR/logs/conversational/"
+echo "  🎵 Audio Logs:       $CURRENT_DIR/logs/audio/"
+echo "  🤖 Model Logs:       $CURRENT_DIR/logs/model/"
 echo ""
 echo "🎯 CONVERSATIONAL FEATURES (PRODUCTION READY):"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -196,8 +198,8 @@ echo "🚀 How to Have a Natural Conversation:"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  1. 🔗 Open the Conversational UI in your browser"
 echo "  2. 🎵 Click 'Connect' to establish connection"
-echo "  3. 🎙️  Choose mode: 'Simple Transcription' or 'Smart Conversation'"
-echo "  4. 🗣️  Click 'Start Conversation' and speak CLEARLY"
+echo "  3. 🗣️  Click 'Start Conversation' and speak naturally"
+echo "  4. 🤖 AI responds intelligently in Smart Conversation Mode"
 echo "  5. 👀 AI will ONLY respond when it detects actual speech"
 echo "  6. 🤫 System ignores silence and background noise"
 echo "  7. 🛑 Click 'Stop Conversation' when done"
@@ -208,8 +210,8 @@ echo "📋 Production Conversation Setup:"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  ⏳ First conversation may take 30+ seconds (one-time model loading)"
 echo "  ⚡ VAD ensures responses only to actual speech (no noise)"
-echo "  📊 Use 'Simple Transcription' for fastest responses"
-echo "  🗣️  Use 'Smart Conversation' for interactive chat"
+echo "  🤖 Smart Conversation Mode provides intelligent responses"
+echo "  🗣️  AI responds naturally and conversationally"
 echo "  🔇 System automatically ignores silence/noise"
 echo "  🎯 Optimized audio threshold prevents spam responses"
 if [ "$FLASH_ATTN_STATUS" = "available" ]; then

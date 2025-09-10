@@ -9,7 +9,7 @@ server:
   
 model:
   name: "mistralai/Voxtral-Mini-3B-2507"
-  cache_dir: "/workspace/model_cache"
+  cache_dir: "./model_cache"
   device: "cuda"
   torch_dtype: "bfloat16"
   max_memory_per_gpu: "6GB"
@@ -37,4 +37,4 @@ streaming:
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: "/workspace/logs/voxtral_streaming.log"
+  file: "./logs/voxtral_streaming.log"

@@ -227,7 +227,7 @@ class VoxtralModel:
             realtime_logger.error(f"❌ Full error traceback: {traceback.format_exc()}")
             raise
     
-    async def process_realtime_chunk(self, audio_data: torch.Tensor, chunk_id: int, mode: str = "transcribe", prompt: str = "") -> Dict[str, Any]:
+    async def process_realtime_chunk(self, audio_data: torch.Tensor, chunk_id: int, mode: str = "conversation", prompt: str = "") -> Dict[str, Any]:
         """
         PRODUCTION-READY processing for conversational real-time audio chunks with VAD
         """
@@ -279,16 +279,8 @@ class VoxtralModel:
                         audio = Audio.from_file(tmp_file.name, strict=False)
                         audio_chunk = AudioChunk.from_audio(audio)
                         
-                        # OPTIMIZED: Choose prompt based on mode for better conversation
-                        if mode == "transcribe":
-                            conversation_prompt = "Please transcribe exactly what the person is saying:"
-                        elif mode == "understand":
-                            if prompt:
-                                conversation_prompt = prompt
-                            else:
-                                conversation_prompt = "Listen to this person speaking and respond naturally as if in a conversation:"
-                        else:
-                            conversation_prompt = "Transcribe what the person is saying:"
+                        # OPTIMIZED: Single unified conversational prompt for Smart Conversation Mode
+                        conversation_prompt = "You are a helpful AI assistant in a natural voice conversation. Listen carefully to what the person is saying and respond naturally, as if you're having a friendly chat. Keep your responses conversational, concise (1-2 sentences), and engaging. Respond directly to what they said without repeating their words back to them."
                         
                         # Create message format
                         text_chunk = TextChunk(text=conversation_prompt)
@@ -423,31 +415,29 @@ class VoxtralModel:
             }
 
     async def transcribe_audio(self, audio_data: torch.Tensor) -> str:
-        """Fast transcription for conversational chunks"""
-        result = await self.process_realtime_chunk(
-            audio_data, 
-            chunk_id=int(time.time() * 1000),
-            mode="transcribe"
-        )
-        return result['response']
-    
-    async def understand_audio(self, audio_data: torch.Tensor, question: str) -> str:
-        """Audio understanding for conversational chunks"""
+        """Unified conversational processing (legacy method)"""
         result = await self.process_realtime_chunk(
             audio_data,
             chunk_id=int(time.time() * 1000),
-            mode="understand",
-            prompt=question
+            mode="conversation"
         )
         return result['response']
-    
+
+    async def understand_audio(self, audio_data: torch.Tensor, question: str = "") -> str:
+        """Unified conversational processing (legacy method)"""
+        result = await self.process_realtime_chunk(
+            audio_data,
+            chunk_id=int(time.time() * 1000),
+            mode="conversation"
+        )
+        return result['response']
+
     async def process_audio_stream(self, audio_data: torch.Tensor, prompt: str = "") -> str:
-        """General audio processing for conversational chunks"""
+        """Unified conversational processing (legacy method)"""
         result = await self.process_realtime_chunk(
             audio_data,
             chunk_id=int(time.time() * 1000),
-            mode="transcribe" if not prompt else "understand",
-            prompt=prompt
+            mode="conversation"
         )
         return result['response']
     

@@ -339,15 +339,12 @@ async def home(request: Request):
             <button id="stopBtn" class="stop-btn" onclick="stopConversation()" disabled>Stop Conversation</button>
         </div>
         
-        <div class="audio-controls">
-            <label>Mode:</label>
-            <select id="modeSelect">
-                <option value="transcribe">Simple Transcription</option>
-                <option value="understand">Smart Conversation</option>
-            </select>
-            
-            <label>Custom Prompt:</label>
-            <input type="text" id="promptInput" placeholder="Optional custom prompt..." style="flex: 1; min-width: 200px;">
+        <!-- Simplified interface - Smart Conversation Mode only -->
+        <div class="audio-controls" style="justify-content: center;">
+            <div style="text-align: center; padding: 10px; background: rgba(255, 255, 255, 0.1); border-radius: 10px;">
+                <strong>🤖 Smart Conversation Mode</strong>
+                <p style="margin: 5px 0; opacity: 0.8; font-size: 0.9em;">AI assistant ready for natural conversation</p>
+            </div>
         </div>
         
         <div class="volume-meter">
@@ -786,8 +783,8 @@ async def home(request: Request):
                 const message = {
                     type: 'audio_chunk',
                     audio_data: base64Audio,
-                    mode: document.getElementById('modeSelect').value,
-                    prompt: document.getElementById('promptInput').value,
+                    mode: 'conversation',  // Always use Smart Conversation Mode
+                    prompt: '',  // No custom prompts - using hardcoded optimal prompt
                     chunk_id: chunkCounter++,
                     timestamp: Date.now()
                 };
@@ -963,8 +960,9 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
             streaming_logger.error(f"[CONVERSATION] Audio preprocessing error for chunk {chunk_id}: {e}")
             return
         
-        mode = data.get("mode", "transcribe")
-        prompt = data.get("prompt", "")
+        # Smart Conversation Mode - unified processing
+        mode = "conversation"  # Always use conversation mode
+        prompt = ""  # Prompt is hardcoded in the model
         
         try:
             result = await voxtral_model.process_realtime_chunk(
