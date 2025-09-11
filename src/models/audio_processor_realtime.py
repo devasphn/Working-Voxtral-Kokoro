@@ -40,7 +40,7 @@ class AudioProcessor:
         self.chunk_counter = 0
 
         # CALIBRATED VAD SETTINGS - Optimized for normal speech (RMS ~0.03-0.04)
-        self.vad_threshold = 0.015           # Calibrated RMS threshold for normal conversational speech
+        self.vad_threshold = 0.020           # Calibrated RMS threshold for normal conversational speech
         self.min_voice_duration_ms = 400     # Minimum 400ms of voice to trigger
         self.min_silence_duration_ms = 1200  # Minimum 1.2s silence to ignore
         self.energy_threshold = 3e-6         # Energy threshold for voice activity
