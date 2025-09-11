@@ -1,4 +1,4 @@
-# Voxtral Real-time Streaming Requirements (UPDATED)
+# Voxtral Real-time Streaming Requirements - Internal VAD Only
 # Core dependencies
 torch>=2.1.0
 transformers>=4.54.0
@@ -7,39 +7,30 @@ numpy>=1.24.0
 scipy>=1.11.0
 mistral-common[audio]>=1.8.1
 accelerate>=0.25.0
-
 # Web framework and API
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 websockets>=13.0
 python-socketio>=5.10.0
-
 # Pydantic v2 with settings (FIXED)
 pydantic>=2.5.0
 pydantic-settings>=2.0.0
-
 # Additional API dependencies
 python-multipart>=0.0.6
 aiofiles>=23.2.1
 httpx>=0.25.0
 pillow>=10.1.0
-
-# Audio processing
+# Audio processing - using internal VAD implementation only
 soundfile>=0.12.1
 torchaudio>=2.1.0
 pyaudio>=0.2.11
-webrtcvad>=2.0.10
-noisereduce>=3.0.0
-
 # Server and networking
 eventlet>=0.33.3
 gunicorn>=21.2.0
-
 # Configuration and utilities
 pyyaml>=6.0.1
 python-dotenv>=1.0.0
 psutil>=5.9.0
-
 # Development and testing (optional)
 pytest>=7.0.0
 pytest-asyncio>=0.21.0
