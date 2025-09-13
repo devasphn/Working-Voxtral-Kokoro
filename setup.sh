@@ -1,15 +1,16 @@
 #!/bin/bash
-# FIXED Setup script for Voxtral Real-time Streaming on RunPod
-# Handles FlashAttention2 installation gracefully
+# ENHANCED Setup script for Voxtral + Kokoro TTS Integration on RunPod
+# Handles separate environments and dependency conflicts
 
 set -e
 
-echo "=== Voxtral Real-time Streaming Setup (FIXED) ==="
-echo "🔧 This setup script will handle FlashAttention2 installation issues"
+echo "=== Voxtral + Kokoro TTS Integration Setup ==="
+echo "🔧 This setup handles both services with dependency isolation"
 
 # Create necessary directories
 mkdir -p /workspace/logs
 mkdir -p /workspace/model_cache
+mkdir -p /workspace/kokoro_cache
 mkdir -p /workspace/audio_buffer
 
 # Update system packages
@@ -22,14 +23,14 @@ apt-get update && apt-get install -y \
     sox \
     git \
     build-essential \
-    ninja-build || echo "⚠️ Some system packages may have failed to install"
+    ninja-build \
+    espeak-ng || echo "⚠️ Some system packages may have failed to install"
 
-# Install Python dependencies (excluding flash-attn for now)
-echo "🐍 Installing Python dependencies..."
+# Install Python dependencies for main Voxtral environment
+echo "🐍 Installing Voxtral dependencies..."
 pip install --upgrade pip
 
-# Install core requirements first
-echo "📥 Installing core requirements..."
+echo "📥 Installing main requirements..."
 pip install -r requirements.txt || {
     echo "⚠️ Some requirements failed to install. Trying individual installation..."
     
@@ -45,52 +46,53 @@ pip install -r requirements.txt || {
     pip install pydantic-settings>=2.0.0 || echo "⚠️ pydantic-settings installation issue"
 }
 
-# FIXED: Optional FlashAttention2 installation with graceful failure handling
+# Set up Kokoro TTS environment
 echo ""
-echo "🚀 FlashAttention2 Setup"
-echo "========================"
-echo "FlashAttention2 is OPTIONAL and can take 30+ minutes to compile."
-echo "The system will work perfectly without it using 'eager' attention."
-echo ""
+echo "🎙️ Setting up Kokoro TTS Environment"
+echo "===================================="
 
-# Check if user wants to install FlashAttention2
-read -p "Do you want to install FlashAttention2? (y/N): " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    echo "📥 Attempting FlashAttention2 installation..."
-    echo "⏳ This may take 30+ minutes. Please be patient..."
-    
-    # Set environment variables for compilation
-    export MAX_JOBS=4  # Limit concurrent jobs to avoid memory issues
-    export TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"  # Common GPU architectures
-    
-    # Try to install FlashAttention2 with proper error handling
-    if pip install flash-attn --no-build-isolation --verbose; then
-        echo "✅ FlashAttention2 installed successfully!"
-        echo "🚀 Your system will use FlashAttention2 for optimal performance."
-    else
-        echo "❌ FlashAttention2 installation failed."
-        echo "💡 This is OK! Your system will use 'eager' attention instead."
-        echo "💡 Performance will still be excellent for real-time streaming."
-        echo ""
-        echo "🔍 Common reasons for FlashAttention2 installation failure:"
-        echo "   - Insufficient RAM during compilation (needs 8GB+)"
-        echo "   - Incompatible CUDA version (needs CUDA 11.4+)"
-        echo "   - Incompatible GPU (needs compute capability 8.0+)"
-        echo "   - Missing build tools"
-        echo ""
-        echo "✅ Continuing setup without FlashAttention2..."
-    fi
-else
-    echo "⏭️ Skipping FlashAttention2 installation."
-    echo "💡 Your system will use 'eager' attention (still very fast!)."
-fi
+# Create virtual environment for Kokoro (to avoid conflicts)
+echo "📦 Creating Kokoro virtual environment..."
+python3 -m venv kokoro_env
+source kokoro_env/bin/activate
+
+echo "📥 Installing Kokoro TTS dependencies..."
+pip install --upgrade pip
+pip install -r kokoro_requirements.txt || {
+    echo "⚠️ Some Kokoro requirements failed. Trying individual installation..."
+    pip install kokoro>=0.9.4 || echo "⚠️ kokoro installation issue"
+    pip install soundfile>=0.12.1 || echo "⚠️ soundfile installation issue"
+    pip install torch>=2.1.0 || echo "⚠️ torch installation issue"
+    pip install fastapi>=0.104.0 || echo "⚠️ fastapi installation issue"
+    pip install uvicorn[standard]>=0.24.0 || echo "⚠️ uvicorn installation issue"
+    pip install misaki[en]>=1.0.0 || echo "⚠️ misaki installation issue"
+}
+
+# Test Kokoro installation
+echo "🧪 Testing Kokoro TTS installation..."
+python3 -c "
+import sys
+try:
+    from kokoro import KPipeline
+    import soundfile as sf
+    import torch
+    print('✅ Kokoro TTS installation successful!')
+    print('✅ All required packages imported successfully')
+except ImportError as e:
+    print(f'❌ Kokoro import error: {e}')
+    sys.exit(1)
+except Exception as e:
+    print(f'❌ Kokoro test error: {e}')
+    sys.exit(1)
+"
+
+deactivate  # Exit Kokoro environment
 
 echo ""
 echo "🤖 Downloading and caching Voxtral model..."
-echo "📥 This may take several minutes depending on your internet connection..."
+echo "📥 This may take several minutes..."
 
-# Download and cache the Voxtral model with improved error handling
+# Download and cache the Voxtral model
 python3 -c "
 import torch
 import sys
@@ -150,11 +152,39 @@ except Exception as e:
 
 # Check if model loading was successful
 if [ $? -eq 0 ]; then
-    echo "✅ Model download and caching completed successfully!"
+    echo "✅ Voxtral model download and caching completed successfully!"
 else
-    echo "❌ Model loading failed. Please check the errors above."
+    echo "❌ Voxtral model loading failed. Please check the errors above."
     exit 1
 fi
+
+# Download Kokoro model in separate environment
+echo ""
+echo "🎙️ Downloading and caching Kokoro TTS model..."
+source kokoro_env/bin/activate
+
+python3 -c "
+import sys
+try:
+    from kokoro import KPipeline
+    import torch
+    
+    print('🚀 Initializing Kokoro TTS pipeline...')
+    print('📥 This will download the Kokoro model (350MB)...')
+    
+    # Initialize pipeline (this will download the model)
+    pipeline = KPipeline(lang_code='a')  # American English
+    print('✅ Kokoro TTS model downloaded and cached successfully!')
+    print('✅ Pipeline initialization successful!')
+    
+except Exception as e:
+    print(f'❌ Kokoro model setup failed: {e}')
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+"
+
+deactivate
 
 # Set environment variables for optimal performance
 echo "🔧 Setting environment variables for optimal performance..."
@@ -165,18 +195,19 @@ export TOKENIZERS_PARALLELISM=false
 
 # Make scripts executable
 chmod +x run_realtime.sh || echo "⚠️ Could not make run_realtime.sh executable"
+chmod +x run_kokoro_service.sh || echo "⚠️ Could not make run_kokoro_service.sh executable"
+chmod +x run_integration_service.sh || echo "⚠️ Could not make run_integration_service.sh executable" 
 chmod +x cleanup.sh || echo "⚠️ Could not make cleanup.sh executable"
 
-# Final system check
 echo ""
 echo "🔍 Final System Check"
 echo "===================="
 
-# Check Python packages
-echo "📦 Checking key Python packages..."
+# Check main Python packages (Voxtral environment)
+echo "📦 Checking Voxtral environment packages..."
 python3 -c "
 import sys
-packages = ['torch', 'transformers', 'fastapi', 'librosa', 'numpy']
+packages = ['torch', 'transformers', 'fastapi', 'librosa', 'numpy', 'mistral_common']
 all_good = True
 
 for pkg in packages:
@@ -187,43 +218,63 @@ for pkg in packages:
         print(f'❌ {pkg}: MISSING')
         all_good = False
 
-# Check FlashAttention2
-try:
-    import flash_attn
-    print('✅ flash_attn: INSTALLED (optimal performance)')
-except ImportError:
-    print('💡 flash_attn: NOT INSTALLED (using eager attention - still fast!)')
-
 if all_good:
-    print('\\n🎉 All core packages are installed correctly!')
+    print('\\n🎉 All Voxtral packages are installed correctly!')
 else:
-    print('\\n⚠️ Some packages are missing. Please check the installation.')
+    print('\\n⚠️ Some Voxtral packages are missing. Please check the installation.')
     sys.exit(1)
 "
 
+# Check Kokoro environment
+echo ""
+echo "📦 Checking Kokoro environment packages..."
+source kokoro_env/bin/activate
+python3 -c "
+import sys
+packages = ['kokoro', 'soundfile', 'torch', 'fastapi', 'misaki']
+all_good = True
+
+for pkg in packages:
+    try:
+        __import__(pkg)
+        print(f'✅ {pkg}: OK')
+    except ImportError:
+        print(f'❌ {pkg}: MISSING')
+        all_good = False
+
+if all_good:
+    print('\\n🎉 All Kokoro packages are installed correctly!')
+else:
+    print('\\n⚠️ Some Kokoro packages are missing. Please check the installation.')
+    sys.exit(1)
+"
+deactivate
+
 if [ $? -eq 0 ]; then
     echo ""
-    echo "🎉 SETUP COMPLETED SUCCESSFULLY!"
-    echo "================================"
+    echo "🎉 COMPLETE SETUP SUCCESSFUL!"
+    echo "============================"
     echo ""
-    echo "✅ Voxtral Real-time Streaming is ready!"
-    echo "✅ Model cached and ready for use"
-    echo "✅ All required dependencies installed"
+    echo "✅ Voxtral + Kokoro TTS Integration is ready!"
+    echo "✅ Voxtral model cached and ready for speech recognition"
+    echo "✅ Kokoro TTS model cached and ready for text-to-speech"
+    echo "✅ All required dependencies installed in separate environments"
     echo ""
     echo "🚀 Next Steps:"
-    echo "   1. Run: chmod +x run_realtime.sh"
-    echo "   2. Run: ./run_realtime.sh"
-    echo "   3. Open: https://[POD_ID]-8000.proxy.runpod.net"
+    echo "   1. Run: chmod +x run_realtime.sh && chmod +x run_kokoro_service.sh && chmod +x run_integration_service.sh"
+    echo "   2. Terminal 1: ./run_realtime.sh (Voxtral Speech Recognition)"
+    echo "   3. Terminal 2: ./run_kokoro_service.sh (Kokoro TTS Service)"
+    echo "   4. Terminal 3: ./run_integration_service.sh (Combined API Service)"
+    echo "   5. Access: https://[POD_ID]-8002.proxy.runpod.net (Complete Speech-to-Speech)"
     echo ""
-    echo "💡 Performance Notes:"
-    if python3 -c "import flash_attn" 2>/dev/null; then
-        echo "   🚀 FlashAttention2 is installed - optimal performance!"
-    else
-        echo "   ⚡ Using eager attention - still excellent performance!"
-        echo "   💡 To install FlashAttention2 later: pip install flash-attn --no-build-isolation"
-    fi
+    echo "📚 For troubleshooting, check: /workspace/logs/"
     echo ""
-    echo "📚 For troubleshooting, check: /workspace/logs/voxtral_streaming.log"
+    echo "🎯 INTEGRATION FEATURES:"
+    echo "✅ Real-time Speech-to-Speech (Voxtral → Kokoro)"
+    echo "✅ Voice Activity Detection with smart conversation"
+    echo "✅ Multiple TTS voices and languages"
+    echo "✅ Separate optimized environments"
+    echo "✅ Production-ready API endpoints"
 else
     echo ""
     echo "❌ SETUP FAILED"

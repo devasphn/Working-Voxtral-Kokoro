@@ -39,6 +39,7 @@ streaming_logger.setLevel(logging.DEBUG)
 # Global variables for lazy initialization
 _voxtral_model = None
 _audio_processor = None
+_tts_service = None
 
 # Response deduplication tracking
 recent_responses = {}  # client_id -> last_response_text
@@ -60,6 +61,15 @@ def get_audio_processor():
         _audio_processor = AudioProcessor()
         streaming_logger.info("Audio processor lazy-loaded")
     return _audio_processor
+
+def get_tts_service():
+    """Lazy initialization of TTS service"""
+    global _tts_service
+    if _tts_service is None:
+        from src.tts.tts_service import TTSService
+        _tts_service = TTSService()
+        streaming_logger.info("TTS service lazy-loaded")
+    return _tts_service
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -606,12 +616,61 @@ async def home(request: Request):
                 case 'info':
                     updateStatus(data.message, 'loading');
                     break;
-                    
+
+                case 'audio_response':
+                    // Handle TTS audio response
+                    handleAudioResponse(data);
+                    break;
+
                 default:
                     log(`Unknown message type: ${data.type}`);
             }
         }
-        
+
+        function handleAudioResponse(data) {
+            log(`Received audio response for chunk ${data.chunk_id} with voice ${data.voice}`);
+
+            try {
+                // Decode base64 audio data
+                const audioData = data.audio_data;
+                if (!audioData) {
+                    log('No audio data in response');
+                    return;
+                }
+
+                // Convert base64 to blob
+                const binaryString = atob(audioData);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+
+                // Create audio blob and play
+                const audioBlob = new Blob([bytes], { type: 'audio/wav' });
+                const audioUrl = URL.createObjectURL(audioBlob);
+                const audio = new Audio(audioUrl);
+
+                // Play the audio
+                audio.play().then(() => {
+                    log(`Playing TTS audio response (${data.metadata?.audio_duration || 'unknown'}s)`);
+                    updateStatus('🔊 Playing AI response...', 'success');
+                }).catch(error => {
+                    log(`Error playing audio: ${error}`);
+                    updateStatus('Error playing audio response', 'error');
+                });
+
+                // Clean up URL after playing
+                audio.addEventListener('ended', () => {
+                    URL.revokeObjectURL(audioUrl);
+                    updateStatus('Ready for conversation', 'success');
+                });
+
+            } catch (error) {
+                log(`Error handling audio response: ${error}`);
+                updateStatus('Error processing audio response', 'error');
+            }
+        }
+
         function displayConversationMessage(data) {
             const conversationDiv = document.getElementById('conversation');
             const contentDiv = document.getElementById('conversationContent');
@@ -1016,15 +1075,15 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
         
         voxtral_model = get_voxtral_model()
         audio_processor = get_audio_processor()
-        
+
+        # Models are now pre-loaded at startup, so this check should always pass
         if not voxtral_model.is_initialized:
-            streaming_logger.info(f"[CONVERSATION] Initializing Voxtral model for {client_id}")
+            streaming_logger.error(f"[CONVERSATION] Model not initialized at startup - this should not happen!")
             await websocket.send_text(json.dumps({
-                "type": "info",
-                "message": "Loading conversational AI with VAD... This may take 30+ seconds"
+                "type": "error",
+                "message": "Model not properly initialized. Please restart the server."
             }))
-            await voxtral_model.initialize()
-            streaming_logger.info(f"[CONVERSATION] Model initialized for {client_id}")
+            return
         
         audio_b64 = data.get("audio_data")
         if not audio_b64:
@@ -1067,7 +1126,7 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
                 is_duplicate = response and response.strip() and response == last_response
 
                 if not is_duplicate:
-                    # Send response only if it's not a duplicate
+                    # Send text response first
                     await websocket.send_text(json.dumps({
                         "type": "response",
                         "mode": mode,
@@ -1079,6 +1138,36 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
                         "skipped_reason": result.get('skipped_reason', None),
                         "had_speech": result.get('had_speech', True)
                     }))
+
+                    # Generate TTS audio if we have a meaningful response
+                    if response and response.strip():
+                        try:
+                            tts_service = get_tts_service()
+                            if tts_service.is_initialized:
+                                # Generate speech from the response
+                                tts_result = await tts_service.generate_speech_async(
+                                    text=response,
+                                    voice="tara",  # Default voice for now
+                                    return_format="base64"
+                                )
+
+                                if tts_result["success"]:
+                                    # Send audio response
+                                    await websocket.send_text(json.dumps({
+                                        "type": "audio_response",
+                                        "audio_data": tts_result["audio_data"],
+                                        "chunk_id": chunk_id,
+                                        "voice": "tara",
+                                        "format": "wav",
+                                        "metadata": tts_result["metadata"]
+                                    }))
+                                    streaming_logger.info(f"[TTS] Audio response generated for chunk {chunk_id}")
+                                else:
+                                    streaming_logger.warning(f"[TTS] Failed to generate audio: {tts_result.get('error', 'Unknown error')}")
+                            else:
+                                streaming_logger.warning("[TTS] TTS service not initialized - skipping audio generation")
+                        except Exception as tts_error:
+                            streaming_logger.error(f"[TTS] Error generating audio response: {tts_error}")
 
                     # Update recent response tracking
                     if response and response.strip():
@@ -1097,8 +1186,40 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
     except Exception as e:
         streaming_logger.error(f"[CONVERSATION] Error handling audio chunk: {e}")
 
+async def initialize_models_at_startup():
+    """Initialize all models at application startup"""
+    streaming_logger.info("🚀 Pre-loading models at startup...")
+
+    try:
+        # Initialize Voxtral model
+        voxtral_model = get_voxtral_model()
+        audio_processor = get_audio_processor()
+        tts_service = get_tts_service()
+
+        if not voxtral_model.is_initialized:
+            streaming_logger.info("📥 Loading Voxtral model at startup...")
+            await voxtral_model.initialize()
+            streaming_logger.info("✅ Voxtral model pre-loaded successfully")
+
+        # Initialize TTS service
+        if not tts_service.is_initialized:
+            streaming_logger.info("📥 Loading TTS service at startup...")
+            await tts_service.initialize()
+            streaming_logger.info("✅ TTS service pre-loaded successfully")
+
+        streaming_logger.info("🎉 All models pre-loaded and ready for conversation!")
+
+    except Exception as e:
+        streaming_logger.error(f"❌ Failed to pre-load models: {e}")
+        raise
+
 if __name__ == "__main__":
     streaming_logger.info("Starting Voxtral Conversational Streaming UI Server with VAD")
+
+    # Pre-load models before starting server
+    import asyncio
+    asyncio.run(initialize_models_at_startup())
+
     uvicorn.run(
         app,
         host=config.server.host,

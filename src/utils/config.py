@@ -46,6 +46,29 @@ class LoggingConfig(BaseModel):
     format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     file: str = "/workspace/logs/voxtral_streaming.log"
 
+class TTSVoicesConfig(BaseModel):
+    english: List[str] = ["tara", "leah", "jess", "leo", "dan", "mia", "zac", "zoe"]
+    french: List[str] = ["pierre", "amelie", "marie"]
+    german: List[str] = ["jana", "thomas", "max"]
+    korean: List[str] = ["유나", "준서"]
+    hindi: List[str] = ["ऋतिका"]
+    mandarin: List[str] = ["长乐", "白芷"]
+    spanish: List[str] = ["javi", "sergio", "maria"]
+    italian: List[str] = ["pietro", "giulia", "carlo"]
+
+class TTSPerformanceConfig(BaseModel):
+    batch_size: int = 16
+    max_queue_size: int = 32
+    num_workers: int = 4
+
+class TTSConfig(BaseModel):
+    engine: str = "orpheus"
+    default_voice: str = "tara"
+    sample_rate: int = 24000
+    enabled: bool = True
+    voices: TTSVoicesConfig = TTSVoicesConfig()
+    performance: TTSPerformanceConfig = TTSPerformanceConfig()
+
 class Config(BaseSettings):
     """Main configuration class using BaseSettings for environment variable support"""
     server: ServerConfig = ServerConfig()
@@ -54,6 +77,7 @@ class Config(BaseSettings):
     spectrogram: SpectrogramConfig = SpectrogramConfig()
     streaming: StreamingConfig = StreamingConfig()
     logging: LoggingConfig = LoggingConfig()
+    tts: TTSConfig = TTSConfig()
     
     # Pydantic v2 settings configuration
     model_config = SettingsConfigDict(

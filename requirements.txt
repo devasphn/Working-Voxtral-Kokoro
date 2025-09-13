@@ -31,6 +31,10 @@ gunicorn>=21.2.0
 pyyaml>=6.0.1
 python-dotenv>=1.0.0
 psutil>=5.9.0
+# TTS (Text-to-Speech) dependencies
+snac>=0.1.0
+requests>=2.31.0
+sounddevice>=0.4.6
 # Development and testing (optional)
 pytest>=7.0.0
 pytest-asyncio>=0.21.0

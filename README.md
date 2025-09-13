@@ -1,39 +1,49 @@
-# Voxtral Real-time Streaming Server
+# Voxtral + TTS Integrated Real-time Voice Application
 
-A high-performance real-time audio streaming implementation using Mistral AI's Voxtral model, optimized for <200ms latency responses. This system provides both WebSocket and TCP streaming interfaces for real-time speech recognition and understanding.
+A complete real-time voice AI system combining Mistral's Voxtral model for speech recognition with Orpheus TTS for high-quality speech synthesis. Features full-duplex voice conversation with pre-loaded models and optimized for RunPod deployment.
 
-## 🚀 Features
+## ✨ Features
 
-- **Real-time Audio Processing**: Process streaming audio with <200ms latency
-- **Multiple Interfaces**: WebSocket (8765) and TCP (8766) streaming servers
-- **Web UI**: Modern web interface on port 8000
-- **Health Monitoring**: Health check API on port 8005
-- **Log-Mel Spectrogram Processing**: Optimized audio preprocessing matching Voxtral's architecture
-- **Multiple Modes**: Transcription, understanding, and general audio processing
-- **GPU Optimized**: Supports CUDA with memory optimization
-- **Production Ready**: Comprehensive logging, error handling, and monitoring
+- **Complete Voice Pipeline**: Speech-to-Text → LLM → Text-to-Speech
+- **Real-time Processing**: End-to-end latency <500ms
+- **High-quality TTS**: Orpheus TTS with 24 voices across 8 languages
+- **Pre-loaded Models**: Instant conversation startup (no loading delays)
+- **Voice Activity Detection**: Smart silence detection and processing
+- **WebSocket Streaming**: Real-time bidirectional audio communication
+- **Web Interface**: Modern UI with voice controls on port 8000
+- **Health Monitoring**: Comprehensive system monitoring on port 8005
+- **GPU Optimized**: CUDA acceleration throughout the pipeline
+- **Production Ready**: Robust error handling and performance monitoring
 
 ## 🏗️ Architecture
 
 ```
+User Voice → VAD → STT (Voxtral) → LLM → TTS (Orpheus) → Audio Output
+                    ↓
+              WebSocket Communication
+                    ↓
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Web UI        │    │  WebSocket       │    │  TCP Server     │
-│   Port 8000     │    │  Port 8765       │    │  Port 8766      │
+│   Web UI        │    │  Health Check    │    │  TCP Server     │
+│   Port 8000     │    │  Port 8005       │    │  Port 8766      │
+│   + WebSocket   │    │  Monitoring      │    │  Alternative    │
+│   + TTS Audio   │    │                  │    │  Interface      │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
-         │                       │                       │
-         └───────────────────────┼───────────────────────┘
                                  │
                     ┌─────────────────────┐
-                    │  Voxtral Model      │
-                    │  Audio Processor    │
-                    │  Log-Mel Spectrogram│
-                    └─────────────────────┘
-                                 │
-                    ┌─────────────────────┐
-                    │  Health Check       │
-                    │  Port 8005          │
+                    │  Pre-loaded Models  │
+                    │  • Voxtral STT      │
+                    │  • Orpheus TTS      │
+                    │  • SNAC Audio       │
                     └─────────────────────┘
 ```
+
+### Key Components
+
+- **Web Interface**: Real-time voice conversation UI
+- **STT Engine**: Voxtral model for speech recognition
+- **TTS Engine**: Orpheus with 24 voices across 8 languages
+- **VAD System**: Smart voice activity detection
+- **Model Pre-loading**: Instant startup with cached models
 
 ## 📋 Requirements
 
@@ -51,33 +61,33 @@ A high-performance real-time audio streaming implementation using Mistral AI's V
 
 ## 🚀 RunPod Deployment
 
-### Step 1: Pod Configuration
-When creating your RunPod pod:
-- **Template**: PyTorch
-- **GPU**: RTX A4500
-- **Container Disk**: 50GB minimum
-- **HTTP Ports**: 8000, 8005
-- **TCP Ports**: 8765, 8766
-
-### Step 2: Deploy Files
-Upload all project files to `/workspace` on your RunPod instance.
-
-### Step 3: Setup and Run
+### Quick Start (Single Command)
 ```bash
-# Make scripts executable
-chmod +x setup.sh run.sh
-
-# Run setup (installs dependencies and downloads model)
-./setup.sh
-
-# Start all services
-./run.sh
+cd workspace
+git clone <your-repository-url> Voxtral-Final
+cd Voxtral-Final
+bash deploy_voxtral_tts.sh
 ```
 
-### Step 4: Access Services
-- **Web UI**: `https://[POD_ID]-8000.proxy.runpod.net`
+### Step 1: Pod Configuration
+When creating your RunPod pod:
+- **Template**: PyTorch 2.1.0+ with CUDA 12.1
+- **GPU**: RTX A4500 or better (8GB+ VRAM)
+- **Container Disk**: 50GB minimum
+- **HTTP Ports**: 8000, 8005
+- **TCP Ports**: 8766
+
+### Step 2: Access Your Application
+- **Web Interface**: `https://[POD_ID]-8000.proxy.runpod.net`
 - **Health Check**: `https://[POD_ID]-8005.proxy.runpod.net/health`
-- **WebSocket**: `ws://[POD_ID]-8765.proxy.runpod.net`
+- **WebSocket**: `wss://[POD_ID]-8000.proxy.runpod.net/ws`
+
+### Step 3: Start Conversation
+1. Open the web interface
+2. Click "Connect" to establish WebSocket connection
+3. Click "Start Conversation" to begin
+4. Speak into your microphone
+5. Receive both text and audio responses!
 - **TCP**: Direct connection to RunPod public IP on assigned port
 
 ## 🎯 Usage

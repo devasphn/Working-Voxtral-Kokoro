@@ -33,6 +33,28 @@ streaming:
   buffer_size: 4096
   timeout_seconds: 300
   latency_target_ms: 200
+
+# TTS (Text-to-Speech) configuration
+tts:
+  engine: "orpheus"
+  default_voice: "tara"
+  sample_rate: 24000
+  enabled: true
+  # Available voices by language
+  voices:
+    english: ["tara", "leah", "jess", "leo", "dan", "mia", "zac", "zoe"]
+    french: ["pierre", "amelie", "marie"]
+    german: ["jana", "thomas", "max"]
+    korean: ["유나", "준서"]
+    hindi: ["ऋतिका"]
+    mandarin: ["长乐", "白芷"]
+    spanish: ["javi", "sergio", "maria"]
+    italian: ["pietro", "giulia", "carlo"]
+  # Performance settings
+  performance:
+    batch_size: 16
+    max_queue_size: 32
+    num_workers: 4
   
 logging:
   level: "INFO"
