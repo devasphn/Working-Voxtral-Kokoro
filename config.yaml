@@ -36,15 +36,16 @@ streaming:
 
 # TTS (Text-to-Speech) configuration
 tts:
-  engine: "orpheus"
+  engine: "orpheus-fastapi"
   default_voice: "ऋतिका"  # Hindi voice as requested
   sample_rate: 24000
   enabled: true
-  # LLM server configuration for Orpheus TTS
-  llm_server:
+  # Orpheus-FastAPI server configuration
+  orpheus_server:
     host: "localhost"
-    port: 8010
+    port: 1234
     timeout: 30
+    model_path: "/workspace/models/Orpheus-3b-FT-Q8_0.gguf"
   # Available voices by language
   voices:
     english: ["tara", "leah", "jess", "leo", "dan", "mia", "zac", "zoe"]
