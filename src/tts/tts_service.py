@@ -52,7 +52,9 @@ class TTSService:
             tts_service_logger.info("✅ TTS Service initialized successfully")
         except Exception as e:
             tts_service_logger.error(f"❌ Failed to initialize TTS Service: {e}")
-            raise
+            # Don't raise the exception - allow the service to continue with degraded functionality
+            tts_service_logger.warning("⚠️ TTS Service will continue with limited functionality")
+            self.is_initialized = False
     
     async def generate_speech_async(self, text: str, voice: str = None, 
                                   return_format: str = "wav") -> Dict[str, Any]:
@@ -67,13 +69,24 @@ class TTSService:
         Returns:
             Dictionary with audio data and metadata
         """
-        if not self.is_initialized:
-            raise RuntimeError("TTS Service not initialized")
-        
         start_time = time.time()
         voice = voice or self.default_voice
         
         tts_service_logger.info(f"🎵 Generating speech: '{text[:50]}...' with voice '{voice}'")
+        
+        # Try to initialize if not already done
+        if not self.is_initialized:
+            tts_service_logger.warning("⚠️ TTS Service not initialized, attempting initialization...")
+            try:
+                await self.initialize()
+            except Exception as e:
+                tts_service_logger.error(f"❌ Failed to initialize TTS during generation: {e}")
+                return {
+                    "success": False,
+                    "error": "TTS Service initialization failed",
+                    "audio_data": None,
+                    "metadata": {}
+                }
         
         try:
             # For now, we'll implement a basic version that would integrate with
@@ -133,13 +146,19 @@ class TTSService:
     
     async def _generate_audio_segments(self, text: str, voice: str) -> List[bytes]:
         """
-        Generate audio segments from text
-        This is a placeholder for the actual token-based generation
+        Generate audio segments from text using the TTS engine
         """
-        # This would integrate with the token generation system
-        # For now, return empty list as placeholder
-        tts_service_logger.warning("⚠️ Audio generation not yet implemented - placeholder")
-        return []
+        try:
+            # Use the engine to generate audio
+            audio_data = await self.engine.generate_audio(text, voice)
+            if audio_data:
+                return [audio_data]
+            else:
+                tts_service_logger.warning("⚠️ No audio data generated from engine")
+                return []
+        except Exception as e:
+            tts_service_logger.error(f"❌ Error in audio generation: {e}")
+            return []
     
     def _combine_audio_segments(self, segments: List[bytes]) -> bytes:
         """Combine multiple audio segments into a single audio stream"""

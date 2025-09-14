@@ -218,6 +218,161 @@ class OrpheusTTSEngine:
         """Get list of available voices"""
         return self.available_voices.copy()
     
+    async def generate_audio(self, text: str, voice: str = None) -> Optional[bytes]:
+        """
+        Generate audio from text using TTS
+        For now, we'll use a fallback TTS implementation until full Orpheus integration is complete
+        """
+        if not self.is_initialized:
+            tts_logger.error("❌ TTS Engine not initialized")
+            return None
+            
+        voice = voice or self.default_voice
+        tts_logger.info(f"🎵 Generating audio for text: '{text[:50]}...' with voice '{voice}'")
+        
+        try:
+            # Try to use system TTS as fallback (espeak-ng or similar)
+            audio_data = await self._generate_with_fallback_tts(text, voice)
+            if audio_data:
+                tts_logger.info(f"✅ Audio generated successfully ({len(audio_data)} bytes)")
+                return audio_data
+            else:
+                tts_logger.warning("⚠️ Fallback TTS failed to generate audio")
+                return None
+                
+        except Exception as e:
+            tts_logger.error(f"❌ Error generating audio: {e}")
+            return None
+    
+    async def _generate_with_fallback_tts(self, text: str, voice: str) -> Optional[bytes]:
+        """
+        Generate audio using fallback TTS (espeak-ng or pyttsx3)
+        This provides immediate functionality while full Orpheus integration is developed
+        """
+        import tempfile
+        import subprocess
+        import os
+        import asyncio
+        
+        try:
+            # Create temporary file for audio output
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
+                temp_path = temp_file.name
+            
+            # Try espeak-ng first (better quality)
+            try:
+                # Map voice names to espeak voices
+                espeak_voice_map = {
+                    "tara": "en+f3", "leah": "en+f4", "jess": "en+f2", "leo": "en+m3",
+                    "dan": "en+m4", "mia": "en+f1", "zac": "en+m2", "zoe": "en+f5",
+                    "pierre": "fr+m3", "amelie": "fr+f3", "marie": "fr+f2",
+                    "jana": "de+f3", "thomas": "de+m3", "max": "de+m2",
+                    "javi": "es+m3", "sergio": "es+m2", "maria": "es+f3",
+                    "pietro": "it+m3", "giulia": "it+f3", "carlo": "it+m2"
+                }
+                
+                espeak_voice = espeak_voice_map.get(voice, "en+f3")
+                
+                # Generate audio with espeak-ng (run in thread pool to avoid blocking)
+                cmd = [
+                    "espeak-ng",
+                    "-v", espeak_voice,
+                    "-s", "150",  # Speed
+                    "-p", "50",   # Pitch
+                    "-a", "100",  # Amplitude
+                    "-w", temp_path,  # Output to WAV file
+                    text
+                ]
+                
+                # Run subprocess in thread pool
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None, 
+                    lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                )
+                
+                if result.returncode == 0 and os.path.exists(temp_path):
+                    # Read the generated audio file
+                    with open(temp_path, 'rb') as f:
+                        audio_data = f.read()
+                    
+                    # Clean up
+                    os.unlink(temp_path)
+                    
+                    if len(audio_data) > 44:  # WAV header is 44 bytes
+                        tts_logger.info(f"✅ Generated audio with espeak-ng ({len(audio_data)} bytes)")
+                        return audio_data
+                    
+            except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.CalledProcessError) as e:
+                tts_logger.warning(f"⚠️ espeak-ng failed: {e}")
+            
+            # Fallback to pyttsx3 if espeak-ng is not available
+            try:
+                # Run pyttsx3 in thread pool to avoid blocking
+                loop = asyncio.get_event_loop()
+                audio_data = await loop.run_in_executor(None, self._generate_with_pyttsx3, text, voice, temp_path)
+                
+                if audio_data and len(audio_data) > 44:
+                    tts_logger.info(f"✅ Generated audio with pyttsx3 ({len(audio_data)} bytes)")
+                    return audio_data
+                        
+            except ImportError:
+                tts_logger.warning("⚠️ pyttsx3 not available, install with: pip install pyttsx3")
+            except Exception as e:
+                tts_logger.warning(f"⚠️ pyttsx3 failed: {e}")
+            
+            # Clean up temp file if it still exists
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+                
+            return None
+            
+        except Exception as e:
+            tts_logger.error(f"❌ Fallback TTS generation failed: {e}")
+            return None
+    
+    def _generate_with_pyttsx3(self, text: str, voice: str, temp_path: str) -> Optional[bytes]:
+        """Generate audio using pyttsx3 (runs in thread pool)"""
+        try:
+            import pyttsx3
+            import os
+            
+            # Initialize pyttsx3
+            engine = pyttsx3.init()
+            
+            # Set voice properties
+            voices = engine.getProperty('voices')
+            if voices:
+                # Try to find a suitable voice
+                for v in voices:
+                    if 'female' in v.name.lower() and voice in ['tara', 'leah', 'jess', 'mia', 'zoe', 'amelie', 'marie', 'jana', 'maria', 'giulia']:
+                        engine.setProperty('voice', v.id)
+                        break
+                    elif 'male' in v.name.lower() and voice in ['leo', 'dan', 'zac', 'pierre', 'thomas', 'max', 'javi', 'sergio', 'pietro', 'carlo']:
+                        engine.setProperty('voice', v.id)
+                        break
+            
+            # Set speech rate and volume
+            engine.setProperty('rate', 180)
+            engine.setProperty('volume', 0.9)
+            
+            # Generate audio
+            engine.save_to_file(text, temp_path)
+            engine.runAndWait()
+            
+            if os.path.exists(temp_path):
+                with open(temp_path, 'rb') as f:
+                    audio_data = f.read()
+                
+                os.unlink(temp_path)
+                return audio_data
+            
+            return None
+            
+        except Exception as e:
+            tts_logger.error(f"❌ pyttsx3 generation failed: {e}")
+            return None
+
     def get_model_info(self) -> Dict[str, Any]:
         """Get TTS model information"""
         return {

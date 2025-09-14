@@ -100,7 +100,9 @@ install_system_deps() {
         htop \
         ffmpeg \
         portaudio19-dev \
-        python3-dev
+        python3-dev \
+        espeak-ng \
+        espeak-ng-data
     
     echo "✅ System dependencies installed"
 }
