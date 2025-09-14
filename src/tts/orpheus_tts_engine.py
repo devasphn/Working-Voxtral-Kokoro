@@ -10,6 +10,11 @@ import time
 import asyncio
 import logging
 import httpx
+import torch
+import numpy as np
+import re
+import wave
+import io
 from typing import Dict, Any, Optional, List
 
 from src.utils.config import config
@@ -28,6 +33,7 @@ class OrpheusTTSEngine:
         self.is_initialized = False
         self.orpheus_server_url = "http://localhost:1234"  # Default Orpheus-FastAPI port
         self.sample_rate = 24000
+        self.snac_model = None  # Will be loaded during initialization
         
         # Voice configuration - focusing on ऋतिका as requested
         self.available_voices = [
@@ -42,9 +48,6 @@ class OrpheusTTSEngine:
         ]
         self.default_voice = "ऋतिका"  # Set as default as requested
         
-        # HTTP client for Orpheus-FastAPI communication
-        self.http_client = None
-        
         tts_logger.info(f"OrpheusTTSEngine initialized for Orpheus-FastAPI at {self.orpheus_server_url}")
         tts_logger.info(f"🎯 Default voice: {self.default_voice}")
     
@@ -54,13 +57,26 @@ class OrpheusTTSEngine:
             tts_logger.info("🚀 Initializing Orpheus TTS Engine...")
             start_time = time.time()
             
-            # Initialize HTTP client for Orpheus-FastAPI communication
-            self.http_client = httpx.AsyncClient(timeout=30.0)
-            
             # Test connection to Orpheus-FastAPI server
-            await self._test_orpheus_connection()
+            connection_ok = await self._test_orpheus_connection()
             
-            self.is_initialized = True
+            if connection_ok:
+                # Initialize SNAC model for audio conversion
+                try:
+                    from snac import SNAC
+                    tts_logger.info("📥 Loading SNAC model for audio conversion...")
+                    self.snac_model = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").eval()
+                    if torch.cuda.is_available():
+                        self.snac_model = self.snac_model.cuda()
+                    tts_logger.info("✅ SNAC model loaded successfully")
+                except ImportError:
+                    tts_logger.warning("⚠️ SNAC model not available, will use text-only mode")
+                    self.snac_model = None
+                except Exception as e:
+                    tts_logger.warning(f"⚠️ SNAC model loading failed: {e}")
+                    self.snac_model = None
+            
+            self.is_initialized = connection_ok
             init_time = time.time() - start_time
             tts_logger.info(f"🎉 Orpheus TTS Engine initialized in {init_time:.2f}s")
             
@@ -72,13 +88,15 @@ class OrpheusTTSEngine:
     async def _test_orpheus_connection(self):
         """Test connection to Orpheus-FastAPI server"""
         try:
-            response = await self.http_client.get(f"{self.orpheus_server_url}/health")
-            if response.status_code == 200:
-                tts_logger.info("✅ Connected to Orpheus-FastAPI server")
-                return True
-            else:
-                tts_logger.warning(f"⚠️ Orpheus-FastAPI server returned status {response.status_code}")
-                return False
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                # Test the models endpoint (llama-cpp-python standard endpoint)
+                response = await client.get(f"{self.orpheus_server_url}/v1/models")
+                if response.status_code == 200:
+                    tts_logger.info("✅ Connected to Orpheus-FastAPI server")
+                    return True
+                else:
+                    tts_logger.warning(f"⚠️ Orpheus-FastAPI server returned status {response.status_code}")
+                    return False
         except Exception as e:
             tts_logger.warning(f"⚠️ Cannot connect to Orpheus-FastAPI server: {e}")
             tts_logger.info("💡 Make sure Orpheus-FastAPI is running on port 1234")
@@ -100,9 +118,9 @@ class OrpheusTTSEngine:
         }
     
     async def close(self):
-        """Close HTTP client"""
-        if self.http_client:
-            await self.http_client.aclose()
+        """Cleanup resources"""
+        # No persistent HTTP client to close since we use context managers
+        pass
     
     def get_available_voices(self) -> List[str]:
         """Get list of available voices"""
@@ -116,14 +134,16 @@ class OrpheusTTSEngine:
         tts_logger.info(f"🎵 Generating audio for text: '{text[:50]}...' with voice '{voice}'")
         
         try:
-            # Try Orpheus-FastAPI first
-            if self.is_initialized and self.http_client:
+            # Try Orpheus-FastAPI first if initialized
+            if self.is_initialized:
                 audio_data = await self._generate_with_orpheus_fastapi(text, voice)
                 if audio_data:
                     tts_logger.info(f"✅ Audio generated with Orpheus-FastAPI ({len(audio_data)} bytes)")
                     return audio_data
                 else:
                     tts_logger.warning("⚠️ Orpheus-FastAPI failed, trying fallback...")
+            else:
+                tts_logger.info("ℹ️ Orpheus-FastAPI not initialized, using fallback TTS")
             
             # Fallback to espeak-ng if Orpheus-FastAPI fails
             audio_data = await self._generate_with_fallback_tts(text, voice)
@@ -230,55 +250,53 @@ class OrpheusTTSEngine:
         Generate audio using Orpheus-FastAPI server
         """
         try:
-            # Prepare request payload for Orpheus-FastAPI
-            payload = {
-                "text": text,
-                "voice": voice,
-                "language": self._get_language_for_voice(voice),
-                "speed": 1.0,
-                "pitch": 1.0
-            }
-            
-            tts_logger.info(f"🌐 Sending request to Orpheus-FastAPI: {payload}")
-            
-            # Send request to Orpheus-FastAPI
-            response = await self.http_client.post(
-                f"{self.orpheus_server_url}/generate_speech",
-                json=payload,
-                timeout=30.0
-            )
-            
-            if response.status_code == 200:
-                # Check if response is JSON (error) or binary (audio)
-                content_type = response.headers.get("content-type", "")
+            # Create new HTTP client for each request to avoid event loop issues
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                # Format prompt for Orpheus TTS model
+                prompt = f"{voice}: {text}"
                 
-                if "application/json" in content_type:
-                    # Error response
-                    error_data = response.json()
-                    tts_logger.error(f"❌ Orpheus-FastAPI error: {error_data}")
-                    return None
-                elif "audio" in content_type or "application/octet-stream" in content_type:
-                    # Audio response
-                    audio_data = response.content
-                    tts_logger.info(f"🎵 Received audio from Orpheus-FastAPI ({len(audio_data)} bytes)")
-                    return audio_data
-                else:
-                    # Try to treat as audio anyway
-                    audio_data = response.content
-                    if len(audio_data) > 44:  # Minimum WAV file size
-                        tts_logger.info(f"🎵 Received audio from Orpheus-FastAPI ({len(audio_data)} bytes)")
+                # Prepare completion request payload for llama-cpp-python server
+                payload = {
+                    "prompt": prompt,
+                    "max_tokens": 512,
+                    "temperature": 0.7,
+                    "stream": False,
+                    "stop": ["<|eot_id|>", "\n\n"]
+                }
+                
+                tts_logger.info(f"🌐 Sending completion request to Orpheus-FastAPI: {payload}")
+                
+                # Send request to llama-cpp-python completion endpoint
+                response = await client.post(
+                    f"{self.orpheus_server_url}/v1/completions",
+                    json=payload,
+                    timeout=30.0
+                )
+                
+                if response.status_code == 200:
+                    # Parse completion response
+                    result = response.json()
+                    generated_text = result.get("choices", [{}])[0].get("text", "")
+                    
+                    tts_logger.info(f"🎯 Generated text from Orpheus: {generated_text[:100]}...")
+                    
+                    # Convert generated text to audio using SNAC model
+                    audio_data = await self._convert_orpheus_text_to_audio(generated_text, voice)
+                    
+                    if audio_data:
+                        tts_logger.info(f"🎵 Generated audio from Orpheus-FastAPI ({len(audio_data)} bytes)")
                         return audio_data
                     else:
-                        tts_logger.warning("⚠️ Received data too small to be audio")
+                        tts_logger.warning("⚠️ Failed to convert Orpheus text to audio")
                         return None
-            else:
-                tts_logger.error(f"❌ Orpheus-FastAPI returned status {response.status_code}")
-                try:
-                    error_text = response.text
-                    tts_logger.error(f"❌ Error details: {error_text}")
-                except:
-                    pass
-                return None
+                else:
+                    tts_logger.error(f"❌ Orpheus-FastAPI returned status {response.status_code}")
+                    try:
+                        error_text = response.text
+                        tts_logger.error(f"❌ Error details: {error_text}")
+                    except:
+                        pass
+                    return None
                 
         except httpx.ConnectError:
             tts_logger.warning("⚠️ Cannot connect to Orpheus-FastAPI server")
@@ -287,6 +305,113 @@ class OrpheusTTSEngine:
         except Exception as e:
             tts_logger.error(f"❌ Orpheus-FastAPI communication failed: {e}")
             return None
+    
+    async def _convert_orpheus_text_to_audio(self, generated_text: str, voice: str) -> Optional[bytes]:
+        """
+        Convert Orpheus-generated text to audio using SNAC model
+        """
+        try:
+            # Extract audio tokens from the generated text
+            tokens = self._extract_audio_tokens(generated_text)
+            
+            if not tokens:
+                tts_logger.warning("⚠️ No audio tokens found in Orpheus output")
+                return None
+            
+            if not self.snac_model:
+                tts_logger.warning("⚠️ SNAC model not available, cannot convert tokens to audio")
+                return None
+            
+            # Convert tokens to audio using SNAC
+            audio_data = self._tokens_to_audio(tokens)
+            
+            if audio_data:
+                # Convert raw audio to WAV format
+                wav_data = self._create_wav_from_raw_audio(audio_data)
+                return wav_data
+            else:
+                return None
+                
+        except Exception as e:
+            tts_logger.error(f"❌ Error converting Orpheus text to audio: {e}")
+            return None
+    
+    def _extract_audio_tokens(self, text: str) -> List[int]:
+        """Extract audio tokens from Orpheus-generated text"""
+        tokens = []
+        
+        # Look for custom token patterns like <custom_token_1234>
+        token_pattern = r'<custom_token_(\d+)>'
+        matches = re.findall(token_pattern, text)
+        
+        for match in matches:
+            try:
+                token_id = int(match)
+                tokens.append(token_id)
+            except ValueError:
+                continue
+        
+        tts_logger.info(f"🔍 Extracted {len(tokens)} audio tokens from Orpheus output")
+        return tokens
+    
+    def _tokens_to_audio(self, tokens: List[int]) -> Optional[bytes]:
+        """Convert token list to audio using SNAC model"""
+        if len(tokens) < 7:
+            return None
+        
+        try:
+            # Group tokens into frames (7 tokens per frame for SNAC)
+            num_frames = len(tokens) // 7
+            frame_tokens = tokens[:num_frames * 7]
+            
+            # Convert to SNAC format
+            device = next(self.snac_model.parameters()).device
+            
+            # Create SNAC codes (simplified version)
+            codes_0 = torch.tensor([frame_tokens[i*7] for i in range(num_frames)], 
+                                 dtype=torch.int32, device=device).unsqueeze(0)
+            codes_1 = torch.tensor([frame_tokens[i*7+1] for i in range(num_frames)] + 
+                                 [frame_tokens[i*7+4] for i in range(num_frames)], 
+                                 dtype=torch.int32, device=device).unsqueeze(0)
+            codes_2 = torch.tensor([frame_tokens[i*7+j] for i in range(num_frames) for j in [2,3,5,6]], 
+                                 dtype=torch.int32, device=device).unsqueeze(0)
+            
+            codes = [codes_0, codes_1, codes_2]
+            
+            # Decode audio using SNAC
+            with torch.inference_mode():
+                audio_hat = self.snac_model.decode(codes)
+                audio_slice = audio_hat[:, :, 2048:4096]  # Extract relevant slice
+                
+                # Convert to bytes
+                if device.type == "cuda":
+                    audio_int16_tensor = (audio_slice * 32767).to(torch.int16)
+                    audio_bytes = audio_int16_tensor.cpu().numpy().tobytes()
+                else:
+                    audio_np = audio_slice.detach().cpu().numpy()
+                    audio_int16 = (audio_np * 32767).astype(np.int16)
+                    audio_bytes = audio_int16.tobytes()
+                
+                return audio_bytes
+                
+        except Exception as e:
+            tts_logger.error(f"❌ Error in SNAC audio conversion: {e}")
+            return None
+    
+    def _create_wav_from_raw_audio(self, raw_audio: bytes) -> bytes:
+        """Create WAV file from raw audio bytes"""
+        try:
+            wav_buffer = io.BytesIO()
+            with wave.open(wav_buffer, 'wb') as wav_file:
+                wav_file.setnchannels(1)  # Mono
+                wav_file.setsampwidth(2)  # 16-bit
+                wav_file.setframerate(self.sample_rate)  # 24kHz
+                wav_file.writeframes(raw_audio)
+            
+            return wav_buffer.getvalue()
+        except Exception as e:
+            tts_logger.error(f"❌ Error creating WAV file: {e}")
+            return raw_audio  # Return raw audio as fallback
     
     def _get_language_for_voice(self, voice: str) -> str:
         """Get language code for voice"""
