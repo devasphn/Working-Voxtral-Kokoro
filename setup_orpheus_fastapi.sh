@@ -66,7 +66,7 @@ cd /workspace/orpheus_fastapi
 
 if [ ! -d "Orpheus-FastAPI" ]; then
     echo "📥 Cloning Orpheus-FastAPI repository..."
-    git clone https://github.com/Lex-au/Orpheus-FastAPI.git
+    git clone https://github.com/devasphn/Orpheus-FastAPI.git
 else
     echo "✅ Orpheus-FastAPI repository already exists"
     cd Orpheus-FastAPI
@@ -117,7 +117,6 @@ python -m llama_cpp.server \
     --host "$HOST" \
     --port $PORT \
     --n_gpu_layers -1 \
-    --verbose \
     2>&1 | tee /workspace/logs/orpheus_fastapi.log
 
 EOF
