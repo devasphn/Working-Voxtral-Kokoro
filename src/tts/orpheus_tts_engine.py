@@ -10,7 +10,7 @@ import time
 import asyncio
 import logging
 import httpx
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from src.utils.config import config
 
