@@ -41,7 +41,13 @@ pip install h11==0.14.0 numpy==1.26.0
 sleep 30
 ```
 
-### 8. Test Integration
+### 8. Debug Orpheus Response (IMPORTANT)
+```bash
+python debug_orpheus_response.py
+python check_orpheus_model.py
+```
+
+# 9. Test Integration
 ```bash
 python test_orpheus_integration.py
 ```
