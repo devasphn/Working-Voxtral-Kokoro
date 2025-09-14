@@ -46,7 +46,7 @@ async def test_orpheus_integration():
         
         # Test 3: Audio generation
         print("\n🎯 Step 3: Testing audio generation...")
-        test_text = "Hello! This is a test of the Orpheus TTS system with ऋतिका voice."
+        test_text = "Hello! This is a test of the Orpheus TTS system."
         
         result = await service.generate_speech_async(
             text=test_text,
