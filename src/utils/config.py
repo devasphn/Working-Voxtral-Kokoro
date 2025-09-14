@@ -56,16 +56,23 @@ class TTSVoicesConfig(BaseModel):
     spanish: List[str] = ["javi", "sergio", "maria"]
     italian: List[str] = ["pietro", "giulia", "carlo"]
 
+class TTSOrpheusServerConfig(BaseModel):
+    host: str = "localhost"
+    port: int = 1234
+    timeout: int = 30
+    model_path: str = "/workspace/models/Orpheus-3b-FT-Q8_0.gguf"
+
 class TTSPerformanceConfig(BaseModel):
     batch_size: int = 16
     max_queue_size: int = 32
     num_workers: int = 4
 
 class TTSConfig(BaseModel):
-    engine: str = "orpheus"
-    default_voice: str = "tara"
+    engine: str = "orpheus-fastapi"
+    default_voice: str = "ऋतिका"  # Updated to match user request
     sample_rate: int = 24000
     enabled: bool = True
+    orpheus_server: TTSOrpheusServerConfig = TTSOrpheusServerConfig()
     voices: TTSVoicesConfig = TTSVoicesConfig()
     performance: TTSPerformanceConfig = TTSPerformanceConfig()
 
