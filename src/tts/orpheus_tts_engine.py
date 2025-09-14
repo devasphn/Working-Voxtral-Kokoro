@@ -1,6 +1,6 @@
 """
-Orpheus TTS Engine - Proper Implementation
-Based on research of Orpheus TTS model and SNAC neural codec
+Orpheus TTS Engine - Correct Implementation
+Based on actual Orpheus-FastAPI repository code
 """
 
 import os
@@ -163,22 +163,27 @@ class OrpheusTTSEngine:
             return None
     
     def _extract_tts_tokens(self, text: str) -> List[int]:
-        """Extract TTS tokens from generated text"""
+        """Extract TTS tokens from generated text - Based on Orpheus-FastAPI implementation"""
         try:
             # Extract <custom_token_XXXX> patterns
             pattern = r'<custom_token_(\d+)>'
             matches = re.findall(pattern, text)
             
             tokens = []
-            for match in matches:
+            for i, match in enumerate(matches):
                 try:
                     token_id = int(match)
-                    # Ensure token is in valid range
-                    if 0 <= token_id <= 4095:
-                        tokens.append(token_id)
+                    # Apply the Orpheus-FastAPI token processing formula
+                    # This is the key difference from our previous implementation
+                    processed_token = token_id - 10 - ((i % 7) * 4096)
+                    
+                    # Ensure token is in valid range after processing
+                    if processed_token > 0:
+                        tokens.append(processed_token)
                 except ValueError:
                     continue
             
+            tts_logger.debug(f"🔍 Processed {len(matches)} raw tokens into {len(tokens)} valid tokens")
             return tokens
             
         except Exception as e:
@@ -186,7 +191,7 @@ class OrpheusTTSEngine:
             return []
     
     async def _tokens_to_audio_snac(self, tokens: List[int]) -> Optional[bytes]:
-        """Convert TTS tokens to audio using SNAC"""
+        """Convert TTS tokens to audio using SNAC - Based on Orpheus-FastAPI implementation"""
         try:
             if not self.snac_model:
                 tts_logger.error("❌ SNAC model not loaded")
@@ -203,47 +208,69 @@ class OrpheusTTSEngine:
                 tokens.append(0)
             
             num_frames = len(tokens) // 7
-            
-            # Create SNAC codes
             device = next(self.snac_model.parameters()).device
             
-            codes_0 = torch.tensor([tokens[i*7] for i in range(num_frames)], 
-                                 dtype=torch.int32, device=device).unsqueeze(0)
-            codes_1 = torch.tensor([tokens[i*7+1] for i in range(num_frames)] + 
-                                 [tokens[i*7+4] for i in range(num_frames)], 
-                                 dtype=torch.int32, device=device).unsqueeze(0)
-            codes_2 = torch.tensor([tokens[i*7+j] for i in range(num_frames) for j in [2,3,5,6]], 
-                                 dtype=torch.int32, device=device).unsqueeze(0)
+            # Pre-allocate tensors for better performance (from Orpheus-FastAPI)
+            codes_0 = torch.zeros(num_frames, dtype=torch.int32, device=device)
+            codes_1 = torch.zeros(num_frames * 2, dtype=torch.int32, device=device)
+            codes_2 = torch.zeros(num_frames * 4, dtype=torch.int32, device=device)
             
-            codes = [codes_0, codes_1, codes_2]
+            # Use vectorized operations (from Orpheus-FastAPI)
+            frame_tensor = torch.tensor(tokens, dtype=torch.int32, device=device)
             
-            # Decode with SNAC
+            # Direct indexing is much faster than concatenation (from Orpheus-FastAPI)
+            for j in range(num_frames):
+                idx = j * 7
+                
+                # Code 0 - single value per frame
+                codes_0[j] = frame_tensor[idx]
+                
+                # Code 1 - two values per frame
+                codes_1[j*2] = frame_tensor[idx+1]
+                codes_1[j*2+1] = frame_tensor[idx+4]
+                
+                # Code 2 - four values per frame
+                codes_2[j*4] = frame_tensor[idx+2]
+                codes_2[j*4+1] = frame_tensor[idx+3]
+                codes_2[j*4+2] = frame_tensor[idx+5]
+                codes_2[j*4+3] = frame_tensor[idx+6]
+            
+            # Reshape codes into expected format
+            codes = [
+                codes_0.unsqueeze(0), 
+                codes_1.unsqueeze(0), 
+                codes_2.unsqueeze(0)
+            ]
+            
+            # Check tokens are in valid range (from Orpheus-FastAPI)
+            if (torch.any(codes[0] < 0) or torch.any(codes[0] > 4096) or 
+                torch.any(codes[1] < 0) or torch.any(codes[1] > 4096) or 
+                torch.any(codes[2] < 0) or torch.any(codes[2] > 4096)):
+                tts_logger.warning("⚠️ Some tokens out of valid range")
+                return None
+            
+            # Decode with SNAC (from Orpheus-FastAPI)
             with torch.inference_mode():
                 audio_hat = self.snac_model.decode(codes)
                 
-                # Extract audio
-                if audio_hat.dim() == 3:
-                    audio = audio_hat[0, 0, :]
+                # Extract the relevant slice (from Orpheus-FastAPI)
+                audio_slice = audio_hat[:, :, 2048:4096]
+                
+                # Process on GPU if possible, with minimal data transfer (from Orpheus-FastAPI)
+                if device.type == "cuda":
+                    # Scale directly on GPU
+                    audio_int16_tensor = (audio_slice * 32767).to(torch.int16)
+                    # Only transfer the final result to CPU
+                    audio_bytes = audio_int16_tensor.cpu().numpy().tobytes()
                 else:
-                    audio = audio_hat.flatten()
-                
-                # Convert to numpy
-                audio_np = audio.cpu().numpy() 
-                
-                # Normalize and convert to 16-bit
-                audio_np = np.clip(audio_np, -1.0, 1.0)
-                audio_int16 = (audio_np * 32767).astype(np.int16)
-                
-                # Create WAV
-                wav_buffer = io.BytesIO()
-                with wave.open(wav_buffer, 'wb') as wav_file:
-                    wav_file.setnchannels(1)
-                    wav_file.setsampwidth(2)
-                    wav_file.setframerate(self.sample_rate)
-                    wav_file.writeframes(audio_int16.tobytes())
+                    # For non-CUDA devices, fall back to the original approach
+                    detached_audio = audio_slice.detach().cpu()
+                    audio_np = detached_audio.numpy()
+                    audio_int16 = (audio_np * 32767).astype(np.int16)
+                    audio_bytes = audio_int16.tobytes()
                 
                 tts_logger.info(f"✅ SNAC conversion successful")
-                return wav_buffer.getvalue()
+                return audio_bytes
                 
         except Exception as e:
             tts_logger.error(f"❌ SNAC conversion failed: {e}")
