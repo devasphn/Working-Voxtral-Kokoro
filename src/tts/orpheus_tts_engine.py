@@ -228,7 +228,7 @@ class OrpheusTTSEngine:
                     audio = audio_hat.flatten()
                 
                 # Convert to numpy
-                audio_np = audio.cpu().numpy() if device == "cuda" else audio.numpy()
+                audio_np = audio.cpu().numpy() 
                 
                 # Normalize and convert to 16-bit
                 audio_np = np.clip(audio_np, -1.0, 1.0)
