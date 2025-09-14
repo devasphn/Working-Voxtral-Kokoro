@@ -36,6 +36,7 @@ snac>=0.1.0
 requests>=2.31.0
 sounddevice>=0.4.6
 pyttsx3>=2.90  # Fallback TTS engine
+httpx>=0.25.0  # For LLM server communication
 # Development and testing (optional)
 pytest>=7.0.0
 pytest-asyncio>=0.21.0

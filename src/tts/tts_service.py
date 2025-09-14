@@ -29,7 +29,7 @@ class TTSService:
         self.is_initialized = False
         
         # Configuration from config file
-        self.default_voice = config.tts.default_voice
+        self.default_voice = "ऋतिका"  # Override to use ऋतिका voice as requested
         self.sample_rate = config.tts.sample_rate
         self.enabled = config.tts.enabled
         

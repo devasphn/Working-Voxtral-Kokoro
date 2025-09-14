@@ -36,18 +36,18 @@ class OrpheusTTSEngine:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.sample_rate = 24000
         
-        # Voice configuration
+        # Voice configuration - focusing on ऋतिका as requested
         self.available_voices = [
+            "ऋतिका",  # Hindi - Primary voice as requested
             "tara", "leah", "jess", "leo", "dan", "mia", "zac", "zoe",  # English
             "pierre", "amelie", "marie",  # French
             "jana", "thomas", "max",  # German
             "유나", "준서",  # Korean
-            "ऋतिका",  # Hindi
             "长乐", "白芷",  # Mandarin
             "javi", "sergio", "maria",  # Spanish
             "pietro", "giulia", "carlo"  # Italian
         ]
-        self.default_voice = "tara"
+        self.default_voice = "ऋतिका"  # Set as default as requested
         
         # Performance settings
         self.high_end_gpu = self._detect_high_end_gpu()
@@ -220,8 +220,7 @@ class OrpheusTTSEngine:
     
     async def generate_audio(self, text: str, voice: str = None) -> Optional[bytes]:
         """
-        Generate audio from text using TTS
-        For now, we'll use a fallback TTS implementation until full Orpheus integration is complete
+        Generate audio from text using Orpheus TTS with LLM token generation
         """
         if not self.is_initialized:
             tts_logger.error("❌ TTS Engine not initialized")
@@ -231,14 +230,21 @@ class OrpheusTTSEngine:
         tts_logger.info(f"🎵 Generating audio for text: '{text[:50]}...' with voice '{voice}'")
         
         try:
-            # Try to use system TTS as fallback (espeak-ng or similar)
-            audio_data = await self._generate_with_fallback_tts(text, voice)
+            # Try Orpheus TTS first (real implementation)
+            audio_data = await self._generate_with_orpheus_tts(text, voice)
             if audio_data:
-                tts_logger.info(f"✅ Audio generated successfully ({len(audio_data)} bytes)")
+                tts_logger.info(f"✅ Audio generated with Orpheus TTS ({len(audio_data)} bytes)")
                 return audio_data
             else:
-                tts_logger.warning("⚠️ Fallback TTS failed to generate audio")
-                return None
+                tts_logger.warning("⚠️ Orpheus TTS failed, trying fallback...")
+                # Fallback to espeak-ng if Orpheus fails
+                audio_data = await self._generate_with_fallback_tts(text, voice)
+                if audio_data:
+                    tts_logger.info(f"✅ Audio generated with fallback TTS ({len(audio_data)} bytes)")
+                    return audio_data
+                else:
+                    tts_logger.warning("⚠️ All TTS methods failed")
+                    return None
                 
         except Exception as e:
             tts_logger.error(f"❌ Error generating audio: {e}")
@@ -331,6 +337,149 @@ class OrpheusTTSEngine:
             tts_logger.error(f"❌ Fallback TTS generation failed: {e}")
             return None
     
+    async def _generate_with_orpheus_tts(self, text: str, voice: str) -> Optional[bytes]:
+        """
+        Generate audio using real Orpheus TTS with LLM token generation
+        """
+        try:
+            # Format the prompt for Orpheus model
+            formatted_prompt = self.format_prompt(text, voice)
+            tts_logger.info(f"🎯 Formatted prompt for voice '{voice}': {formatted_prompt[:100]}...")
+            
+            # Generate tokens using LLM server
+            tokens = await self._generate_tokens_from_llm(formatted_prompt)
+            if not tokens:
+                tts_logger.warning("⚠️ No tokens generated from LLM server")
+                return None
+            
+            tts_logger.info(f"🔢 Generated {len(tokens)} tokens from LLM")
+            
+            # Convert tokens to audio using SNAC model
+            audio_data = await self._convert_tokens_to_audio(tokens)
+            if audio_data:
+                tts_logger.info(f"🎵 Successfully converted tokens to audio ({len(audio_data)} bytes)")
+                return audio_data
+            else:
+                tts_logger.warning("⚠️ Failed to convert tokens to audio")
+                return None
+                
+        except Exception as e:
+            tts_logger.error(f"❌ Orpheus TTS generation failed: {e}")
+            return None
+    
+    async def _generate_tokens_from_llm(self, prompt: str) -> Optional[List[int]]:
+        """
+        Generate tokens from LLM server (llama.cpp or similar)
+        """
+        import httpx
+        import asyncio
+        
+        # LLM server configuration
+        llm_server_url = "http://localhost:8010"  # Default llama.cpp server port
+        
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                # Try to generate tokens from LLM server
+                response = await client.post(
+                    f"{llm_server_url}/completion",
+                    json={
+                        "prompt": prompt,
+                        "max_tokens": 1024,
+                        "temperature": 0.7,
+                        "stream": False,
+                        "stop": ["<|eot_id|>"]
+                    }
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    generated_text = result.get("content", "")
+                    
+                    # Extract tokens from the generated text
+                    tokens = self._extract_tokens_from_text(generated_text)
+                    return tokens
+                else:
+                    tts_logger.warning(f"⚠️ LLM server returned status {response.status_code}")
+                    return None
+                    
+        except httpx.ConnectError:
+            tts_logger.warning("⚠️ Cannot connect to LLM server on port 8010")
+            return None
+        except Exception as e:
+            tts_logger.error(f"❌ Error communicating with LLM server: {e}")
+            return None
+    
+    def _extract_tokens_from_text(self, text: str) -> List[int]:
+        """
+        Extract audio tokens from LLM generated text
+        Looks for <custom_token_XXXX> patterns and converts them to token IDs
+        """
+        import re
+        
+        tokens = []
+        # Find all custom token patterns
+        token_pattern = r'<custom_token_(\d+)>'
+        matches = re.findall(token_pattern, text)
+        
+        for i, match in enumerate(matches):
+            token_id = self.turn_token_into_id(f"<custom_token_{match}>", i)
+            if token_id is not None:
+                tokens.append(token_id)
+        
+        tts_logger.info(f"🔍 Extracted {len(tokens)} valid tokens from LLM output")
+        return tokens
+    
+    async def _convert_tokens_to_audio(self, tokens: List[int]) -> Optional[bytes]:
+        """
+        Convert token list to audio using SNAC model
+        """
+        if not tokens or len(tokens) < 7:
+            tts_logger.warning("⚠️ Not enough tokens for audio generation")
+            return None
+        
+        try:
+            # Group tokens into frames (7 tokens per frame)
+            num_frames = len(tokens) // 7
+            if num_frames == 0:
+                return None
+            
+            # Convert tokens to audio using existing convert_to_audio method
+            audio_bytes = self.convert_to_audio(tokens[:num_frames * 7], num_frames)
+            
+            if audio_bytes:
+                # Convert raw audio to WAV format
+                wav_audio = self._create_wav_from_raw_audio(audio_bytes)
+                return wav_audio
+            else:
+                return None
+                
+        except Exception as e:
+            tts_logger.error(f"❌ Error converting tokens to audio: {e}")
+            return None
+    
+    def _create_wav_from_raw_audio(self, raw_audio: bytes) -> bytes:
+        """
+        Create WAV file from raw audio bytes
+        """
+        import wave
+        import io
+        
+        try:
+            # Create WAV file in memory
+            wav_buffer = io.BytesIO()
+            with wave.open(wav_buffer, 'wb') as wav_file:
+                wav_file.setnchannels(1)  # Mono
+                wav_file.setsampwidth(2)  # 16-bit
+                wav_file.setframerate(self.sample_rate)  # 24kHz
+                wav_file.writeframes(raw_audio)
+            
+            wav_data = wav_buffer.getvalue()
+            return wav_data
+            
+        except Exception as e:
+            tts_logger.error(f"❌ Error creating WAV file: {e}")
+            return raw_audio  # Return raw audio as fallback
+
     def _generate_with_pyttsx3(self, text: str, voice: str, temp_path: str) -> Optional[bytes]:
         """Generate audio using pyttsx3 (runs in thread pool)"""
         try:

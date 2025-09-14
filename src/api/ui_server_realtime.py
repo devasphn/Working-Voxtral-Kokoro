@@ -1147,7 +1147,7 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
                                 # Generate speech from the response
                                 tts_result = await tts_service.generate_speech_async(
                                     text=response,
-                                    voice="tara",  # Default voice for now
+                                    voice="ऋतिका",  # Use ऋतिका voice as requested
                                     return_format="base64"
                                 )
 
@@ -1157,7 +1157,7 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
                                         "type": "audio_response",
                                         "audio_data": tts_result["audio_data"],
                                         "chunk_id": chunk_id,
-                                        "voice": "tara",
+                                        "voice": "ऋतिका",
                                         "format": "wav",
                                         "metadata": tts_result["metadata"]
                                     }))

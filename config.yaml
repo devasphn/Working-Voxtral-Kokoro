@@ -37,9 +37,14 @@ streaming:
 # TTS (Text-to-Speech) configuration
 tts:
   engine: "orpheus"
-  default_voice: "tara"
+  default_voice: "ऋतिका"  # Hindi voice as requested
   sample_rate: 24000
   enabled: true
+  # LLM server configuration for Orpheus TTS
+  llm_server:
+    host: "localhost"
+    port: 8010
+    timeout: 30
   # Available voices by language
   voices:
     english: ["tara", "leah", "jess", "leo", "dan", "mia", "zac", "zoe"]
