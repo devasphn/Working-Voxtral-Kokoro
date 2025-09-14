@@ -38,5 +38,4 @@ python -m llama_cpp.server \
     --host "$HOST" \
     --port $PORT \
     --n_gpu_layers -1 \
-    --verbose \
     2>&1 | tee /workspace/logs/orpheus_fastapi.log

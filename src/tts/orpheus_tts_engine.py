@@ -128,122 +128,30 @@ class OrpheusTTSEngine:
     
     async def generate_audio(self, text: str, voice: str = None) -> Optional[bytes]:
         """
-        Generate audio from text using Orpheus-FastAPI
+        Generate audio from text using Orpheus-FastAPI ONLY (no fallback)
         """
         voice = voice or self.default_voice
         tts_logger.info(f"🎵 Generating audio for text: '{text[:50]}...' with voice '{voice}'")
         
+        if not self.is_initialized:
+            tts_logger.error("❌ Orpheus-FastAPI not initialized - cannot generate audio")
+            return None
+        
         try:
-            # Try Orpheus-FastAPI first if initialized
-            if self.is_initialized:
-                audio_data = await self._generate_with_orpheus_fastapi(text, voice)
-                if audio_data:
-                    tts_logger.info(f"✅ Audio generated with Orpheus-FastAPI ({len(audio_data)} bytes)")
-                    return audio_data
-                else:
-                    tts_logger.warning("⚠️ Orpheus-FastAPI failed, trying fallback...")
-            else:
-                tts_logger.info("ℹ️ Orpheus-FastAPI not initialized, using fallback TTS")
-            
-            # Fallback to espeak-ng if Orpheus-FastAPI fails
-            audio_data = await self._generate_with_fallback_tts(text, voice)
+            # Use ONLY Orpheus-FastAPI (no fallback as requested)
+            audio_data = await self._generate_with_orpheus_fastapi(text, voice)
             if audio_data:
-                tts_logger.info(f"✅ Audio generated with fallback TTS ({len(audio_data)} bytes)")
+                tts_logger.info(f"✅ Audio generated with Orpheus-FastAPI ({len(audio_data)} bytes)")
                 return audio_data
             else:
-                tts_logger.warning("⚠️ All TTS methods failed")
+                tts_logger.error("❌ Orpheus-FastAPI failed to generate audio")
                 return None
                 
         except Exception as e:
-            tts_logger.error(f"❌ Error generating audio: {e}")
+            tts_logger.error(f"❌ Error generating audio with Orpheus-FastAPI: {e}")
             return None
     
-    async def _generate_with_fallback_tts(self, text: str, voice: str) -> Optional[bytes]:
-        """
-        Generate audio using fallback TTS (espeak-ng or pyttsx3)
-        This provides immediate functionality while full Orpheus integration is developed
-        """
-        import tempfile
-        import subprocess
-        import os
-        import asyncio
-        
-        try:
-            # Create temporary file for audio output
-            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
-                temp_path = temp_file.name
-            
-            # Try espeak-ng first (better quality)
-            try:
-                # Map voice names to espeak voices
-                espeak_voice_map = {
-                    "tara": "en+f3", "leah": "en+f4", "jess": "en+f2", "leo": "en+m3",
-                    "dan": "en+m4", "mia": "en+f1", "zac": "en+m2", "zoe": "en+f5",
-                    "pierre": "fr+m3", "amelie": "fr+f3", "marie": "fr+f2",
-                    "jana": "de+f3", "thomas": "de+m3", "max": "de+m2",
-                    "javi": "es+m3", "sergio": "es+m2", "maria": "es+f3",
-                    "pietro": "it+m3", "giulia": "it+f3", "carlo": "it+m2"
-                }
-                
-                espeak_voice = espeak_voice_map.get(voice, "en+f3")
-                
-                # Generate audio with espeak-ng (run in thread pool to avoid blocking)
-                cmd = [
-                    "espeak-ng",
-                    "-v", espeak_voice,
-                    "-s", "150",  # Speed
-                    "-p", "50",   # Pitch
-                    "-a", "100",  # Amplitude
-                    "-w", temp_path,  # Output to WAV file
-                    text
-                ]
-                
-                # Run subprocess in thread pool
-                loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(
-                    None, 
-                    lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-                )
-                
-                if result.returncode == 0 and os.path.exists(temp_path):
-                    # Read the generated audio file
-                    with open(temp_path, 'rb') as f:
-                        audio_data = f.read()
-                    
-                    # Clean up
-                    os.unlink(temp_path)
-                    
-                    if len(audio_data) > 44:  # WAV header is 44 bytes
-                        tts_logger.info(f"✅ Generated audio with espeak-ng ({len(audio_data)} bytes)")
-                        return audio_data
-                    
-            except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.CalledProcessError) as e:
-                tts_logger.warning(f"⚠️ espeak-ng failed: {e}")
-            
-            # Fallback to pyttsx3 if espeak-ng is not available
-            try:
-                # Run pyttsx3 in thread pool to avoid blocking
-                loop = asyncio.get_event_loop()
-                audio_data = await loop.run_in_executor(None, self._generate_with_pyttsx3, text, voice, temp_path)
-                
-                if audio_data and len(audio_data) > 44:
-                    tts_logger.info(f"✅ Generated audio with pyttsx3 ({len(audio_data)} bytes)")
-                    return audio_data
-                        
-            except ImportError:
-                tts_logger.warning("⚠️ pyttsx3 not available, install with: pip install pyttsx3")
-            except Exception as e:
-                tts_logger.warning(f"⚠️ pyttsx3 failed: {e}")
-            
-            # Clean up temp file if it still exists
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
-                
-            return None
-            
-        except Exception as e:
-            tts_logger.error(f"❌ Fallback TTS generation failed: {e}")
-            return None
+
     
     async def _generate_with_orpheus_fastapi(self, text: str, voice: str) -> Optional[bytes]:
         """
@@ -252,25 +160,29 @@ class OrpheusTTSEngine:
         try:
             # Create new HTTP client for each request to avoid event loop issues
             async with httpx.AsyncClient(timeout=30.0) as client:
-                # Format prompt for Orpheus TTS model
-                prompt = f"{voice}: {text}"
+                # Format prompt specifically for Orpheus TTS model to generate audio tokens
+                # The key is to use the correct format that triggers audio token generation
+                prompt = f"<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\nGenerate speech for the voice '{voice}' saying: \"{text}\"<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n{voice}: <|audio|>"
                 
                 # Prepare completion request payload for llama-cpp-python server
                 payload = {
                     "prompt": prompt,
-                    "max_tokens": 512,
-                    "temperature": 0.7,
+                    "max_tokens": 1024,  # Increased for audio tokens
+                    "temperature": 0.3,  # Lower temperature for more consistent audio generation
                     "stream": False,
-                    "stop": ["<|eot_id|>", "\n\n"]
+                    "stop": ["<|eot_id|>"],
+                    "top_p": 0.9,
+                    "repeat_penalty": 1.1
                 }
                 
-                tts_logger.info(f"🌐 Sending completion request to Orpheus-FastAPI: {payload}")
+                tts_logger.info(f"🌐 Sending TTS request to Orpheus-FastAPI")
+                tts_logger.debug(f"🎯 Prompt: {prompt[:100]}...")
                 
                 # Send request to llama-cpp-python completion endpoint
                 response = await client.post(
                     f"{self.orpheus_server_url}/v1/completions",
                     json=payload,
-                    timeout=30.0
+                    timeout=60.0  # Increased timeout for audio generation
                 )
                 
                 if response.status_code == 200:
@@ -340,18 +252,49 @@ class OrpheusTTSEngine:
         """Extract audio tokens from Orpheus-generated text"""
         tokens = []
         
-        # Look for custom token patterns like <custom_token_1234>
-        token_pattern = r'<custom_token_(\d+)>'
-        matches = re.findall(token_pattern, text)
+        tts_logger.debug(f"🔍 Analyzing Orpheus output: {text[:200]}...")
         
-        for match in matches:
-            try:
-                token_id = int(match)
-                tokens.append(token_id)
-            except ValueError:
-                continue
+        # Look for various token patterns that Orpheus might generate
+        patterns = [
+            r'<custom_token_(\d+)>',  # Standard format
+            r'<audio_token_(\d+)>',   # Alternative format
+            r'<token_(\d+)>',         # Simplified format
+            r'<(\d+)>',               # Minimal format
+            r'\[(\d+)\]',             # Bracket format
+            r'token_(\d+)',           # Plain format
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, text)
+            for match in matches:
+                try:
+                    token_id = int(match)
+                    if 0 <= token_id <= 4096:  # Valid SNAC token range
+                        tokens.append(token_id)
+                except ValueError:
+                    continue
+        
+        # If no tokens found, try to extract any numbers that might be tokens
+        if not tokens:
+            tts_logger.warning("⚠️ No standard tokens found, trying to extract any numbers...")
+            number_matches = re.findall(r'\b(\d{1,4})\b', text)
+            for match in number_matches:
+                try:
+                    token_id = int(match)
+                    if 0 <= token_id <= 4096:
+                        tokens.append(token_id)
+                except ValueError:
+                    continue
+        
+        # Remove duplicates while preserving order
+        tokens = list(dict.fromkeys(tokens))
         
         tts_logger.info(f"🔍 Extracted {len(tokens)} audio tokens from Orpheus output")
+        if tokens:
+            tts_logger.debug(f"🎵 First few tokens: {tokens[:10]}")
+        else:
+            tts_logger.warning(f"⚠️ Full Orpheus output for debugging: {text}")
+        
         return tokens
     
     def _tokens_to_audio(self, tokens: List[int]) -> Optional[bytes]:
@@ -429,47 +372,7 @@ class OrpheusTTSEngine:
         return voice_language_map.get(voice, "en")
 
 
-    def _generate_with_pyttsx3(self, text: str, voice: str, temp_path: str) -> Optional[bytes]:
-        """Generate audio using pyttsx3 (runs in thread pool)"""
-        try:
-            import pyttsx3
-            import os
-            
-            # Initialize pyttsx3
-            engine = pyttsx3.init()
-            
-            # Set voice properties
-            voices = engine.getProperty('voices')
-            if voices:
-                # Try to find a suitable voice
-                for v in voices:
-                    if 'female' in v.name.lower() and voice in ['tara', 'leah', 'jess', 'mia', 'zoe', 'amelie', 'marie', 'jana', 'maria', 'giulia']:
-                        engine.setProperty('voice', v.id)
-                        break
-                    elif 'male' in v.name.lower() and voice in ['leo', 'dan', 'zac', 'pierre', 'thomas', 'max', 'javi', 'sergio', 'pietro', 'carlo']:
-                        engine.setProperty('voice', v.id)
-                        break
-            
-            # Set speech rate and volume
-            engine.setProperty('rate', 180)
-            engine.setProperty('volume', 0.9)
-            
-            # Generate audio
-            engine.save_to_file(text, temp_path)
-            engine.runAndWait()
-            
-            if os.path.exists(temp_path):
-                with open(temp_path, 'rb') as f:
-                    audio_data = f.read()
-                
-                os.unlink(temp_path)
-                return audio_data
-            
-            return None
-            
-        except Exception as e:
-            tts_logger.error(f"❌ pyttsx3 generation failed: {e}")
-            return None
+
 
     def get_model_info(self) -> Dict[str, Any]:
         """Get TTS model information"""
