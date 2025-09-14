@@ -13,6 +13,8 @@ import httpx
 import base64
 import wave
 import io
+import re
+import numpy as np
 from typing import Dict, Any, Optional, List
 
 from src.utils.config import config
@@ -225,7 +227,6 @@ class OrpheusTTSEngine:
             
             # Extract TTS tokens from the generated text
             # Format: <custom_token_XXXX> where XXXX is the token ID
-            import re
             token_pattern = r'<custom_token_(\d+)>'
             tokens = re.findall(token_pattern, generated_text)
             
@@ -355,8 +356,6 @@ class OrpheusTTSEngine:
         Uses text analysis to create more natural-sounding audio
         """
         try:
-            import numpy as np
-            
             # Analyze text for better audio generation
             words = original_text.split()
             duration = max(2.0, len(words) * 0.5)  # 0.5 seconds per word, minimum 2 seconds
@@ -439,8 +438,6 @@ class OrpheusTTSEngine:
     def _create_enhanced_audio_from_tokens(self, tokens: List[str], voice: str) -> Optional[bytes]:
         """Create enhanced audio based on actual TTS token values"""
         try:
-            import numpy as np
-            
             tts_logger.info(f"🎵 Creating enhanced audio from {len(tokens)} TTS tokens")
             
             # Convert tokens to numeric values
