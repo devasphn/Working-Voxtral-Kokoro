@@ -39,7 +39,23 @@ class StreamingConfig(BaseModel):
     max_connections: int = 100
     buffer_size: int = 4096
     timeout_seconds: int = 300
-    latency_target_ms: int = 200
+    latency_target_ms: int = 300  # Updated to match sub-300ms requirement
+    
+class PerformanceConfig(BaseModel):
+    """Performance monitoring and optimization configuration"""
+    enable_monitoring: bool = True
+    latency_targets: Dict[str, int] = {
+        "voxtral_processing_ms": 100,
+        "orpheus_generation_ms": 150,
+        "audio_conversion_ms": 50,
+        "total_end_to_end_ms": 300
+    }
+    alert_thresholds: Dict[str, float] = {
+        "consecutive_failures": 5,
+        "degradation_threshold": 1.5,
+        "success_rate_threshold": 0.8
+    }
+    optimization_level: str = "balanced"  # "performance", "balanced", "memory_efficient"
 
 class LoggingConfig(BaseModel):
     level: str = "INFO"
@@ -56,25 +72,49 @@ class TTSVoicesConfig(BaseModel):
     spanish: List[str] = ["javi", "sergio", "maria"]
     italian: List[str] = ["pietro", "giulia", "carlo"]
 
+class TTSOrpheusDirectConfig(BaseModel):
+    """Configuration for direct Orpheus model integration"""
+    model_name: str = "mistralai/Orpheus-Mini-3B-2507"
+    device: str = "cuda"
+    torch_dtype: str = "float16"
+    max_new_tokens: int = 1000
+    temperature: float = 0.1
+    top_p: float = 0.95
+    
 class TTSOrpheusServerConfig(BaseModel):
+    """Legacy configuration for Orpheus-FastAPI server (deprecated)"""
     host: str = "localhost"
     port: int = 1234
     timeout: int = 30
     model_path: str = "/workspace/models/Orpheus-3b-FT-Q8_0.gguf"
+    enabled: bool = False  # Disabled by default in favor of direct integration
 
 class TTSPerformanceConfig(BaseModel):
-    batch_size: int = 16
+    """TTS performance and optimization settings"""
+    batch_size: int = 1  # Direct integration uses batch_size=1
     max_queue_size: int = 32
     num_workers: int = 4
+    target_latency_ms: int = 150  # Target for TTS generation
+    memory_optimization: str = "balanced"  # "performance", "balanced", "memory_efficient"
+    
+class GPUMemoryConfig(BaseModel):
+    """GPU memory management configuration"""
+    min_vram_gb: float = 8.0
+    recommended_vram_gb: float = 16.0
+    memory_fraction: float = 0.9
+    cleanup_frequency: str = "after_each_generation"  # "after_each_generation", "periodic"
+    enable_monitoring: bool = True
 
 class TTSConfig(BaseModel):
-    engine: str = "orpheus-fastapi"
+    engine: str = "orpheus-direct"  # Changed to direct integration
     default_voice: str = "ऋतिका"  # Updated to match user request
     sample_rate: int = 24000
     enabled: bool = True
-    orpheus_server: TTSOrpheusServerConfig = TTSOrpheusServerConfig()
+    orpheus_direct: TTSOrpheusDirectConfig = TTSOrpheusDirectConfig()
+    orpheus_server: TTSOrpheusServerConfig = TTSOrpheusServerConfig()  # Legacy support
     voices: TTSVoicesConfig = TTSVoicesConfig()
     performance: TTSPerformanceConfig = TTSPerformanceConfig()
+    gpu_memory: GPUMemoryConfig = GPUMemoryConfig()
 
 class Config(BaseSettings):
     """Main configuration class using BaseSettings for environment variable support"""
@@ -85,6 +125,7 @@ class Config(BaseSettings):
     streaming: StreamingConfig = StreamingConfig()
     logging: LoggingConfig = LoggingConfig()
     tts: TTSConfig = TTSConfig()
+    performance: PerformanceConfig = PerformanceConfig()
     
     # Pydantic v2 settings configuration
     model_config = SettingsConfigDict(

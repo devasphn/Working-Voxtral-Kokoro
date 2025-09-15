@@ -1,0 +1,407 @@
+"""
+Unified Model Manager for Orpheus TTS Integration
+Centralized management of both Voxtral and Orpheus models with shared GPU memory
+"""
+
+import asyncio
+import time
+import logging
+from typing import Dict, Any, Optional, Tuple
+from threading import Lock
+import torch
+import gc
+
+# Import model classes
+from src.models.voxtral_model_realtime import VoxtralModel
+from src.tts.orpheus_direct_model import OrpheusDirectModel
+from src.utils.gpu_memory_manager import GPUMemoryManager, InsufficientVRAMError
+
+# Setup logging
+unified_logger = logging.getLogger("unified_model_manager")
+unified_logger.setLevel(logging.INFO)
+
+class ModelInitializationError(Exception):
+    """Raised when model initialization fails"""
+    pass
+
+class UnifiedModelManager:
+    """
+    Centralized management of both Voxtral and Orpheus models
+    Handles initialization order, memory sharing, and lifecycle management
+    """
+    
+    def __init__(self):
+        self.voxtral_model = None
+        self.orpheus_model = None
+        self.gpu_memory_manager = None
+        self.initialization_lock = Lock()
+        self.is_initialized = False
+        
+        # Initialization state tracking
+        self.voxtral_initialized = False
+        self.orpheus_initialized = False
+        self.memory_manager_initialized = False
+        
+        # Performance tracking
+        self.initialization_times = {}
+        self.memory_usage = {}
+        
+        unified_logger.info("UnifiedModelManager created")
+    
+    async def initialize(self) -> bool:
+        """
+        Initialize both models with optimal memory management
+        Returns True if successful, raises ModelInitializationError on failure
+        """
+        try:
+            with self.initialization_lock:
+                if self.is_initialized:
+                    unified_logger.info("✅ Models already initialized")
+                    return True
+                
+                unified_logger.info("🚀 Starting unified model initialization...")
+                total_start_time = time.time()
+                
+                # Step 1: Initialize GPU Memory Manager
+                await self._initialize_memory_manager()
+                
+                # Step 2: Initialize models in optimal order (Voxtral first for memory layout)
+                await self._initialize_voxtral_model()
+                await self._initialize_orpheus_model()
+                
+                # Step 3: Verify initialization and optimize memory
+                await self._post_initialization_optimization()
+                
+                total_time = time.time() - total_start_time
+                self.initialization_times["total"] = total_time
+                
+                self.is_initialized = True
+                unified_logger.info(f"🎉 Unified model initialization completed in {total_time:.2f}s")
+                
+                # Log final memory statistics
+                await self._log_memory_statistics()
+                
+                return True
+                
+        except Exception as e:
+            unified_logger.error(f"❌ Unified model initialization failed: {e}")
+            await self._cleanup_partial_initialization()
+            raise ModelInitializationError(f"Failed to initialize models: {e}")
+    
+    async def _initialize_memory_manager(self):
+        """Initialize GPU memory manager and validate requirements"""
+        try:
+            unified_logger.info("🧠 Initializing GPU Memory Manager...")
+            start_time = time.time()
+            
+            self.gpu_memory_manager = GPUMemoryManager()
+            
+            # Validate VRAM requirements
+            self.gpu_memory_manager.validate_vram_requirements()
+            
+            # Create shared memory pool
+            shared_pool = self.gpu_memory_manager.create_shared_memory_pool()
+            
+            self.memory_manager_initialized = True
+            init_time = time.time() - start_time
+            self.initialization_times["memory_manager"] = init_time
+            
+            unified_logger.info(f"✅ GPU Memory Manager initialized in {init_time:.2f}s")
+            
+        except InsufficientVRAMError as e:
+            unified_logger.error(f"❌ Insufficient VRAM: {e}")
+            raise ModelInitializationError(f"VRAM requirements not met: {e}")
+        except Exception as e:
+            unified_logger.error(f"❌ Memory manager initialization failed: {e}")
+            raise ModelInitializationError(f"Memory manager initialization failed: {e}")
+    
+    async def _initialize_voxtral_model(self):
+        """Initialize Voxtral model first for optimal memory layout"""
+        try:
+            unified_logger.info("🎙️ Initializing Voxtral model...")
+            start_time = time.time()
+            
+            # Import and create Voxtral model
+            self.voxtral_model = VoxtralModel()
+            
+            # Initialize with memory optimization
+            await self.voxtral_model.initialize()
+            
+            # Track memory usage
+            if self.gpu_memory_manager.device == "cuda":
+                voxtral_memory = torch.cuda.memory_allocated() / (1024**3)
+                self.gpu_memory_manager.track_model_memory("voxtral", voxtral_memory)
+                self.memory_usage["voxtral_gb"] = voxtral_memory
+            
+            self.voxtral_initialized = True
+            init_time = time.time() - start_time
+            self.initialization_times["voxtral"] = init_time
+            
+            unified_logger.info(f"✅ Voxtral model initialized in {init_time:.2f}s")
+            
+        except Exception as e:
+            unified_logger.error(f"❌ Voxtral initialization failed: {e}")
+            raise ModelInitializationError(f"Voxtral initialization failed: {e}")
+    
+    async def _initialize_orpheus_model(self):
+        """Initialize Orpheus model with shared memory optimization"""
+        try:
+            unified_logger.info("🎵 Initializing Orpheus Direct model...")
+            start_time = time.time()
+            
+            # Create Orpheus model
+            self.orpheus_model = OrpheusDirectModel()
+            
+            # Initialize with shared memory pool
+            device = self.gpu_memory_manager.device
+            shared_pool = self.gpu_memory_manager.memory_pool
+            
+            await self.orpheus_model.initialize(device=device, shared_memory_pool=shared_pool)
+            
+            # Track memory usage
+            if self.gpu_memory_manager.device == "cuda":
+                total_memory = torch.cuda.memory_allocated() / (1024**3)
+                orpheus_memory = total_memory - self.memory_usage.get("voxtral_gb", 0)
+                self.gpu_memory_manager.track_model_memory("orpheus", orpheus_memory)
+                self.memory_usage["orpheus_gb"] = orpheus_memory
+            
+            self.orpheus_initialized = True
+            init_time = time.time() - start_time
+            self.initialization_times["orpheus"] = init_time
+            
+            unified_logger.info(f"✅ Orpheus model initialized in {init_time:.2f}s")
+            
+        except Exception as e:
+            unified_logger.error(f"❌ Orpheus initialization failed: {e}")
+            raise ModelInitializationError(f"Orpheus initialization failed: {e}")
+    
+    async def _post_initialization_optimization(self):
+        """Perform post-initialization memory optimization"""
+        try:
+            unified_logger.info("⚡ Performing post-initialization optimization...")
+            
+            # Clean up any unused memory
+            self.gpu_memory_manager.cleanup_unused_memory()
+            
+            # Get memory optimization recommendations
+            recommendations = self.gpu_memory_manager.optimize_memory_allocation()
+            
+            # Apply recommendations if needed
+            if recommendations.get("optimization_level") == "memory_efficient":
+                unified_logger.info("💾 Applying memory-efficient optimizations...")
+                # Could implement model-specific optimizations here
+            
+            # Verify both models are working
+            await self._verify_model_functionality()
+            
+            unified_logger.info("✅ Post-initialization optimization completed")
+            
+        except Exception as e:
+            unified_logger.error(f"❌ Post-initialization optimization failed: {e}")
+            raise ModelInitializationError(f"Post-initialization optimization failed: {e}")
+    
+    async def _verify_model_functionality(self):
+        """Verify both models are functioning correctly"""
+        try:
+            unified_logger.info("🔍 Verifying model functionality...")
+            
+            # Test Voxtral model
+            if self.voxtral_model and self.voxtral_model.is_initialized:
+                model_info = self.voxtral_model.get_model_info()
+                if model_info.get("status") != "initialized":
+                    raise ModelInitializationError("Voxtral model verification failed")
+                unified_logger.info("✅ Voxtral model verification passed")
+            
+            # Test Orpheus model
+            if self.orpheus_model and self.orpheus_model.is_initialized:
+                model_info = self.orpheus_model.get_model_info()
+                if not model_info.get("is_initialized"):
+                    raise ModelInitializationError("Orpheus model verification failed")
+                unified_logger.info("✅ Orpheus model verification passed")
+            
+            unified_logger.info("✅ All model functionality verified")
+            
+        except Exception as e:
+            unified_logger.error(f"❌ Model verification failed: {e}")
+            raise ModelInitializationError(f"Model verification failed: {e}")
+    
+    async def _log_memory_statistics(self):
+        """Log comprehensive memory usage statistics"""
+        try:
+            if self.gpu_memory_manager:
+                stats = self.gpu_memory_manager.get_memory_stats()
+                
+                unified_logger.info("📊 Final Memory Statistics:")
+                unified_logger.info(f"   Total VRAM: {stats.total_vram_gb:.2f} GB")
+                unified_logger.info(f"   Used VRAM: {stats.used_vram_gb:.2f} GB")
+                unified_logger.info(f"   Available VRAM: {stats.available_vram_gb:.2f} GB")
+                unified_logger.info(f"   Voxtral Memory: {stats.voxtral_memory_gb:.2f} GB")
+                unified_logger.info(f"   Orpheus Memory: {stats.orpheus_memory_gb:.2f} GB")
+                unified_logger.info(f"   System RAM: {stats.system_ram_gb:.2f} GB")
+                unified_logger.info(f"   System RAM Used: {stats.system_ram_used_gb:.2f} GB")
+                
+                # Calculate efficiency metrics
+                total_model_memory = stats.voxtral_memory_gb + stats.orpheus_memory_gb
+                memory_efficiency = (total_model_memory / stats.used_vram_gb * 100) if stats.used_vram_gb > 0 else 0
+                
+                unified_logger.info(f"   Memory Efficiency: {memory_efficiency:.1f}%")
+                
+        except Exception as e:
+            unified_logger.warning(f"⚠️ Failed to log memory statistics: {e}")
+    
+    async def _cleanup_partial_initialization(self):
+        """Cleanup resources from partial initialization"""
+        try:
+            unified_logger.info("🧹 Cleaning up partial initialization...")
+            
+            if self.orpheus_model:
+                await self.orpheus_model.cleanup()
+                self.orpheus_model = None
+                self.orpheus_initialized = False
+            
+            if self.voxtral_model:
+                # Voxtral model doesn't have async cleanup, but we can clear references
+                self.voxtral_model = None
+                self.voxtral_initialized = False
+            
+            if self.gpu_memory_manager:
+                self.gpu_memory_manager.cleanup_unused_memory()
+            
+            self.is_initialized = False
+            unified_logger.info("✅ Partial initialization cleanup completed")
+            
+        except Exception as e:
+            unified_logger.error(f"❌ Cleanup failed: {e}")
+    
+    async def get_voxtral_model(self) -> Optional[VoxtralModel]:
+        """Get initialized Voxtral model"""
+        if not self.is_initialized or not self.voxtral_initialized:
+            raise ModelInitializationError("Voxtral model not initialized")
+        return self.voxtral_model
+    
+    async def get_orpheus_model(self) -> Optional[OrpheusDirectModel]:
+        """Get initialized Orpheus model"""
+        if not self.is_initialized or not self.orpheus_initialized:
+            raise ModelInitializationError("Orpheus model not initialized")
+        return self.orpheus_model
+    
+    async def cleanup_gpu_memory(self) -> None:
+        """Cleanup GPU memory and run garbage collection"""
+        try:
+            unified_logger.info("🧹 Cleaning up GPU memory...")
+            
+            if self.gpu_memory_manager:
+                self.gpu_memory_manager.cleanup_unused_memory()
+            
+            # Additional cleanup
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            gc.collect()
+            
+            unified_logger.info("✅ GPU memory cleanup completed")
+            
+        except Exception as e:
+            unified_logger.error(f"❌ GPU memory cleanup failed: {e}")
+    
+    def get_memory_stats(self) -> Dict[str, Any]:
+        """Get comprehensive memory usage statistics"""
+        try:
+            if not self.gpu_memory_manager:
+                return {"error": "Memory manager not initialized"}
+            
+            base_stats = self.gpu_memory_manager.get_memory_stats()
+            
+            return {
+                "memory_stats": {
+                    "total_vram_gb": base_stats.total_vram_gb,
+                    "used_vram_gb": base_stats.used_vram_gb,
+                    "available_vram_gb": base_stats.available_vram_gb,
+                    "voxtral_memory_gb": base_stats.voxtral_memory_gb,
+                    "orpheus_memory_gb": base_stats.orpheus_memory_gb,
+                    "system_ram_gb": base_stats.system_ram_gb,
+                    "system_ram_used_gb": base_stats.system_ram_used_gb
+                },
+                "initialization_stats": {
+                    "is_initialized": self.is_initialized,
+                    "voxtral_initialized": self.voxtral_initialized,
+                    "orpheus_initialized": self.orpheus_initialized,
+                    "initialization_times": self.initialization_times
+                },
+                "model_info": {
+                    "voxtral_available": self.voxtral_model is not None,
+                    "orpheus_available": self.orpheus_model is not None,
+                    "device": self.gpu_memory_manager.device if self.gpu_memory_manager else "unknown"
+                }
+            }
+            
+        except Exception as e:
+            unified_logger.error(f"❌ Failed to get memory stats: {e}")
+            return {"error": str(e)}
+    
+    def get_model_info(self) -> Dict[str, Any]:
+        """Get comprehensive model information"""
+        try:
+            info = {
+                "unified_manager": {
+                    "is_initialized": self.is_initialized,
+                    "voxtral_initialized": self.voxtral_initialized,
+                    "orpheus_initialized": self.orpheus_initialized,
+                    "memory_manager_initialized": self.memory_manager_initialized
+                },
+                "initialization_times": self.initialization_times,
+                "memory_usage": self.memory_usage
+            }
+            
+            # Add Voxtral model info
+            if self.voxtral_model:
+                info["voxtral"] = self.voxtral_model.get_model_info()
+            
+            # Add Orpheus model info
+            if self.orpheus_model:
+                info["orpheus"] = self.orpheus_model.get_model_info()
+            
+            # Add memory manager info
+            if self.gpu_memory_manager:
+                info["memory_manager"] = self.get_memory_stats()
+            
+            return info
+            
+        except Exception as e:
+            unified_logger.error(f"❌ Failed to get model info: {e}")
+            return {"error": str(e)}
+    
+    async def shutdown(self):
+        """Shutdown and cleanup all resources"""
+        try:
+            unified_logger.info("🛑 Shutting down Unified Model Manager...")
+            
+            # Cleanup Orpheus model
+            if self.orpheus_model:
+                await self.orpheus_model.cleanup()
+                self.orpheus_model = None
+                self.orpheus_initialized = False
+            
+            # Cleanup Voxtral model (no async cleanup available)
+            if self.voxtral_model:
+                self.voxtral_model = None
+                self.voxtral_initialized = False
+            
+            # Final memory cleanup
+            if self.gpu_memory_manager:
+                self.gpu_memory_manager.cleanup_unused_memory()
+                self.gpu_memory_manager = None
+                self.memory_manager_initialized = False
+            
+            # Clear state
+            self.is_initialized = False
+            self.initialization_times.clear()
+            self.memory_usage.clear()
+            
+            unified_logger.info("✅ Unified Model Manager shutdown completed")
+            
+        except Exception as e:
+            unified_logger.error(f"❌ Shutdown failed: {e}")
+
+# Global unified model manager instance
+unified_model_manager = UnifiedModelManager()

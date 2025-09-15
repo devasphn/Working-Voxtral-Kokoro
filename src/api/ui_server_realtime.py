@@ -36,22 +36,22 @@ app = FastAPI(
 streaming_logger = logging.getLogger("realtime_streaming")
 streaming_logger.setLevel(logging.DEBUG)
 
-# Global variables for lazy initialization
-_voxtral_model = None
+# Global variables for unified model management
+_unified_manager = None
 _audio_processor = None
-_tts_service = None
+_performance_monitor = None
 
 # Response deduplication tracking
 recent_responses = {}  # client_id -> last_response_text
 
-def get_voxtral_model():
-    """Lazy initialization of Voxtral model"""
-    global _voxtral_model
-    if _voxtral_model is None:
-        from src.models.voxtral_model_realtime import voxtral_model
-        _voxtral_model = voxtral_model
-        streaming_logger.info("Voxtral model lazy-loaded")
-    return _voxtral_model
+def get_unified_manager():
+    """Get unified model manager instance"""
+    global _unified_manager
+    if _unified_manager is None:
+        from src.models.unified_model_manager import unified_model_manager
+        _unified_manager = unified_model_manager
+        streaming_logger.info("Unified model manager loaded")
+    return _unified_manager
 
 def get_audio_processor():
     """Lazy initialization of Audio processor"""
@@ -62,14 +62,14 @@ def get_audio_processor():
         streaming_logger.info("Audio processor lazy-loaded")
     return _audio_processor
 
-def get_tts_service():
-    """Lazy initialization of TTS service"""
-    global _tts_service
-    if _tts_service is None:
-        from src.tts.tts_service import TTSService
-        _tts_service = TTSService()
-        streaming_logger.info("TTS service lazy-loaded")
-    return _tts_service
+def get_performance_monitor():
+    """Get performance monitor instance"""
+    global _performance_monitor
+    if _performance_monitor is None:
+        from src.utils.performance_monitor import performance_monitor
+        _performance_monitor = performance_monitor
+        streaming_logger.info("Performance monitor loaded")
+    return _performance_monitor
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -980,26 +980,52 @@ async def home(request: Request):
 
 @app.get("/api/status")
 async def api_status():
-    """API endpoint for server status"""
+    """API endpoint for unified model system status"""
     try:
-        voxtral_model = get_voxtral_model()
-        model_info = voxtral_model.get_model_info()
+        unified_manager = get_unified_manager()
+        performance_monitor = get_performance_monitor()
+        
+        # Get comprehensive system status
+        model_info = unified_manager.get_model_info()
+        memory_stats = unified_manager.get_memory_stats()
+        performance_summary = performance_monitor.get_performance_summary()
+        
+        # Determine overall health status
+        is_healthy = (
+            unified_manager.is_initialized and
+            model_info['unified_manager']['voxtral_initialized'] and
+            model_info['unified_manager']['orpheus_initialized']
+        )
+        
         return JSONResponse({
-            "status": "healthy" if voxtral_model.is_initialized else "initializing",
+            "status": "healthy" if is_healthy else "initializing",
             "timestamp": time.time(),
-            "model": model_info,
+            "unified_system": {
+                "initialized": unified_manager.is_initialized,
+                "voxtral_ready": model_info['unified_manager']['voxtral_initialized'],
+                "orpheus_ready": model_info['unified_manager']['orpheus_initialized'],
+                "memory_manager_ready": model_info['unified_manager']['memory_manager_initialized']
+            },
+            "memory_stats": memory_stats.get("memory_stats", {}),
+            "performance_stats": {
+                "total_operations": performance_summary["statistics"]["total_operations"],
+                "average_latency_ms": performance_summary["statistics"]["average_latency_ms"],
+                "operations_within_target": performance_summary["statistics"]["operations_within_target"]
+            },
             "config": {
                 "sample_rate": config.audio.sample_rate,
                 "tcp_ports": config.server.tcp_ports,
                 "latency_target": config.streaming.latency_target_ms,
-                "mode": "conversational_optimized_with_vad"
+                "mode": "conversational_optimized_with_direct_orpheus",
+                "integration_type": "direct_orpheus"
             }
         })
     except Exception as e:
         return JSONResponse({
             "status": "error",
             "timestamp": time.time(),
-            "error": str(e)
+            "error": str(e),
+            "integration_type": "direct_orpheus"
         }, status_code=500)
 
 # WebSocket endpoint for CONVERSATIONAL streaming with VAD
@@ -1043,11 +1069,15 @@ async def websocket_endpoint(websocket: WebSocket):
                     }))
                     
                 elif msg_type == "status":
-                    voxtral_model = get_voxtral_model()
-                    model_info = voxtral_model.get_model_info()
+                    unified_manager = get_unified_manager()
+                    model_info = unified_manager.get_model_info()
+                    performance_monitor = get_performance_monitor()
+                    performance_summary = performance_monitor.get_performance_summary()
+                    
                     await websocket.send_text(json.dumps({
                         "type": "status",
-                        "model_info": model_info
+                        "model_info": model_info,
+                        "performance_summary": performance_summary
                     }))
                     
                 else:
@@ -1066,22 +1096,36 @@ async def websocket_endpoint(websocket: WebSocket):
         streaming_logger.error(f"[CONVERSATION] WebSocket error for {client_id}: {e}")
 
 async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, client_id: str):
-    """Process conversational audio chunks with VAD"""
+    """Process conversational audio chunks with VAD using unified model manager"""
     try:
         chunk_start_time = time.time()
         chunk_id = data.get("chunk_id", 0)
         
         streaming_logger.info(f"[CONVERSATION] Processing chunk {chunk_id} for {client_id}")
         
-        voxtral_model = get_voxtral_model()
+        # Get services from unified manager
+        unified_manager = get_unified_manager()
         audio_processor = get_audio_processor()
+        performance_monitor = get_performance_monitor()
 
-        # Models are now pre-loaded at startup, so this check should always pass
-        if not voxtral_model.is_initialized:
-            streaming_logger.error(f"[CONVERSATION] Model not initialized at startup - this should not happen!")
+        # Check if unified manager is initialized
+        if not unified_manager.is_initialized:
+            streaming_logger.error(f"[CONVERSATION] Unified model manager not initialized!")
             await websocket.send_text(json.dumps({
                 "type": "error",
-                "message": "Model not properly initialized. Please restart the server."
+                "message": "Models not properly initialized. Please restart the server."
+            }))
+            return
+        
+        # Get models from unified manager
+        try:
+            voxtral_model = await unified_manager.get_voxtral_model()
+            tts_service_direct = await unified_manager.get_orpheus_model()
+        except Exception as e:
+            streaming_logger.error(f"[CONVERSATION] Failed to get models: {e}")
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "message": f"Failed to access models: {str(e)}"
             }))
             return
         
@@ -1105,9 +1149,16 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
             streaming_logger.error(f"[CONVERSATION] Audio preprocessing error for chunk {chunk_id}: {e}")
             return
         
-        # Smart Conversation Mode - unified processing
+        # Smart Conversation Mode - unified processing with performance monitoring
         mode = "conversation"  # Always use conversation mode
         prompt = ""  # Prompt is hardcoded in the model
+        
+        # Start performance timing
+        voxtral_timing_id = performance_monitor.start_timing("voxtral_processing", {
+            "chunk_id": chunk_id,
+            "client_id": client_id,
+            "audio_length": len(audio_array)
+        })
         
         try:
             result = await voxtral_model.process_realtime_chunk(
@@ -1116,6 +1167,9 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
                 mode=mode, 
                 prompt=prompt
             )
+            
+            # End Voxtral timing
+            voxtral_processing_time = performance_monitor.end_timing(voxtral_timing_id)
             
             if result['success']:
                 response = result['response']
@@ -1139,35 +1193,66 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
                         "had_speech": result.get('had_speech', True)
                     }))
 
-                    # Generate TTS audio if we have a meaningful response
+                    # Generate TTS audio if we have a meaningful response using direct Orpheus
                     if response and response.strip():
                         try:
-                            tts_service = get_tts_service()
-                            if tts_service.is_initialized:
-                                # Generate speech from the response
-                                tts_result = await tts_service.generate_speech_async(
-                                    text=response,
-                                    voice="ऋतिका",  # Use ऋतिका voice as requested
-                                    return_format="base64"
-                                )
+                            # Start TTS timing
+                            tts_timing_id = performance_monitor.start_timing("orpheus_generation", {
+                                "chunk_id": chunk_id,
+                                "text_length": len(response),
+                                "voice": "ऋतिका"
+                            })
+                            
+                            # Generate speech using direct Orpheus model
+                            audio_data = await tts_service_direct.generate_speech(
+                                text=response,
+                                voice="ऋतिका"  # Use ऋतिका voice as requested
+                            )
+                            
+                            # End TTS timing
+                            tts_generation_time = performance_monitor.end_timing(tts_timing_id)
 
-                                if tts_result["success"]:
-                                    # Send audio response
-                                    await websocket.send_text(json.dumps({
-                                        "type": "audio_response",
-                                        "audio_data": tts_result["audio_data"],
-                                        "chunk_id": chunk_id,
-                                        "voice": "ऋतिका",
-                                        "format": "wav",
-                                        "metadata": tts_result["metadata"]
-                                    }))
-                                    streaming_logger.info(f"[TTS] Audio response generated for chunk {chunk_id}")
-                                else:
-                                    streaming_logger.warning(f"[TTS] Failed to generate audio: {tts_result.get('error', 'Unknown error')}")
+                            if audio_data:
+                                # Convert to base64 for transmission
+                                import base64
+                                audio_b64 = base64.b64encode(audio_data).decode('utf-8')
+                                
+                                # Calculate audio duration
+                                audio_duration_ms = (len(audio_data) / 2) / 24000 * 1000  # 16-bit, 24kHz
+                                
+                                # Send audio response
+                                await websocket.send_text(json.dumps({
+                                    "type": "audio_response",
+                                    "audio_data": audio_b64,
+                                    "chunk_id": chunk_id,
+                                    "voice": "ऋतिका",
+                                    "format": "wav",
+                                    "metadata": {
+                                        "audio_duration_ms": audio_duration_ms,
+                                        "generation_time_ms": tts_generation_time,
+                                        "sample_rate": 24000,
+                                        "channels": 1
+                                    }
+                                }))
+                                
+                                streaming_logger.info(f"[TTS-DIRECT] Audio response generated for chunk {chunk_id} in {tts_generation_time:.1f}ms")
+                                
+                                # Log performance breakdown
+                                performance_monitor.log_latency_breakdown({
+                                    "voxtral_processing_ms": voxtral_processing_time,
+                                    "orpheus_generation_ms": tts_generation_time,
+                                    "audio_conversion_ms": 0,  # Already included in generation
+                                    "total_end_to_end_ms": voxtral_processing_time + tts_generation_time
+                                })
+                                
                             else:
-                                streaming_logger.warning("[TTS] TTS service not initialized - skipping audio generation")
+                                streaming_logger.warning(f"[TTS-DIRECT] Failed to generate audio for chunk {chunk_id}")
+                                
                         except Exception as tts_error:
-                            streaming_logger.error(f"[TTS] Error generating audio response: {tts_error}")
+                            streaming_logger.error(f"[TTS-DIRECT] Error generating audio response: {tts_error}")
+                            # End timing even on error
+                            if 'tts_timing_id' in locals():
+                                performance_monitor.end_timing(tts_timing_id)
 
                     # Update recent response tracking
                     if response and response.strip():
@@ -1187,30 +1272,50 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
         streaming_logger.error(f"[CONVERSATION] Error handling audio chunk: {e}")
 
 async def initialize_models_at_startup():
-    """Initialize all models at application startup"""
-    streaming_logger.info("🚀 Pre-loading models at startup...")
+    """Initialize all models using unified model manager at application startup"""
+    streaming_logger.info("🚀 Initializing unified model system at startup...")
 
     try:
-        # Initialize Voxtral model
-        voxtral_model = get_voxtral_model()
+        # Initialize unified model manager
+        unified_manager = get_unified_manager()
         audio_processor = get_audio_processor()
-        tts_service = get_tts_service()
+        performance_monitor = get_performance_monitor()
 
-        if not voxtral_model.is_initialized:
-            streaming_logger.info("📥 Loading Voxtral model at startup...")
-            await voxtral_model.initialize()
-            streaming_logger.info("✅ Voxtral model pre-loaded successfully")
+        if not unified_manager.is_initialized:
+            streaming_logger.info("📥 Initializing unified model manager...")
+            success = await unified_manager.initialize()
+            
+            if success:
+                streaming_logger.info("✅ Unified model manager initialized successfully")
+                
+                # Get model info for logging
+                model_info = unified_manager.get_model_info()
+                streaming_logger.info(f"📊 Voxtral initialized: {model_info['unified_manager']['voxtral_initialized']}")
+                streaming_logger.info(f"📊 Orpheus initialized: {model_info['unified_manager']['orpheus_initialized']}")
+                
+                # Log memory statistics
+                memory_stats = unified_manager.get_memory_stats()
+                if "memory_stats" in memory_stats:
+                    stats = memory_stats["memory_stats"]
+                    streaming_logger.info(f"💾 GPU Memory: {stats['used_vram_gb']:.2f}GB / {stats['total_vram_gb']:.2f}GB")
+                    streaming_logger.info(f"💾 Voxtral: {stats['voxtral_memory_gb']:.2f}GB, Orpheus: {stats['orpheus_memory_gb']:.2f}GB")
+                
+            else:
+                raise Exception("Unified model manager initialization failed")
+        else:
+            streaming_logger.info("✅ Unified model manager already initialized")
 
-        # Initialize TTS service
-        if not tts_service.is_initialized:
-            streaming_logger.info("📥 Loading TTS service at startup...")
-            await tts_service.initialize()
-            streaming_logger.info("✅ TTS service pre-loaded successfully")
-
-        streaming_logger.info("🎉 All models pre-loaded and ready for conversation!")
+        streaming_logger.info("🎉 All models ready for conversation with direct Orpheus integration!")
 
     except Exception as e:
-        streaming_logger.error(f"❌ Failed to pre-load models: {e}")
+        streaming_logger.error(f"❌ Failed to initialize unified model system: {e}")
+        # Try to get error details from unified manager
+        try:
+            unified_manager = get_unified_manager()
+            error_summary = unified_manager.get_model_info()
+            streaming_logger.error(f"📊 Model states: {error_summary}")
+        except:
+            pass
         raise
 
 if __name__ == "__main__":
