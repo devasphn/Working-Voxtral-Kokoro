@@ -47,7 +47,7 @@ tts:
   
   # Direct Orpheus Model Configuration
   orpheus_direct:
-    model_name: "mistralai/Orpheus-Mini-3B-2507"
+    model_name: "canopy-ai/Orpheus-3b"  # Correct Orpheus model
     device: "cuda"
     torch_dtype: "float16"
     max_new_tokens: 1000

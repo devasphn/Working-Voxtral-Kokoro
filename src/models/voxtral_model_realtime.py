@@ -275,20 +275,22 @@ class VoxtralModel:
                         sf.write(tmp_file.name, audio_np, sample_rate)
                         realtime_logger.debug(f"💾 Written chunk {chunk_id} to temporary file: {tmp_file.name}")
                         
-                        # Load using mistral_common Audio
-                        audio = Audio.from_file(tmp_file.name, strict=False)
+                        # Load using mistral_common Audio with updated API
+                        audio = Audio.from_file(tmp_file.name)
                         audio_chunk = AudioChunk.from_audio(audio)
                         
                         # OPTIMIZED: Single unified conversational prompt for Smart Conversation Mode
                         conversation_prompt = "You are a helpful AI assistant in a natural voice conversation. Listen carefully to what the person is saying and respond naturally, as if you're having a friendly chat. Keep your responses conversational, concise (1-2 sentences), and engaging. Respond directly to what they said without repeating their words back to them."
                         
-                        # Create message format
+                        # Create message format using updated API
                         text_chunk = TextChunk(text=conversation_prompt)
                         user_message = UserMessage(content=[audio_chunk, text_chunk])
-                        openai_message = user_message.to_openai()
                         
-                        # Process inputs
-                        inputs = self.processor.apply_chat_template([openai_message], return_tensors="pt")
+                        # Convert to chat format for processor
+                        messages = [user_message.model_dump()]
+                        
+                        # Process inputs with updated API
+                        inputs = self.processor.apply_chat_template(messages, return_tensors="pt")
                         
                         # Move to device
                         if hasattr(inputs, 'to'):

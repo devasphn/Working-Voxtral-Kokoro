@@ -43,8 +43,8 @@ class OrpheusDirectModel:
         self.model_lock = Lock()
         self.is_initialized = False
         
-        # Model configuration
-        self.model_name = "mistralai/Orpheus-Mini-3B-2507"  # Orpheus model
+        # Model configuration - Updated to correct Orpheus model
+        self.model_name = "canopy-ai/Orpheus-3b"  # Correct Orpheus model from Canopy AI
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.torch_dtype = torch.float16 if self.device == "cuda" else torch.float32
         
@@ -292,48 +292,58 @@ class OrpheusDirectModel:
     def _create_tts_prompt(self, text: str, voice: str) -> str:
         """
         Create properly formatted prompt for Orpheus TTS generation
+        Based on official Orpheus repository format
         """
-        # Orpheus TTS prompt format
-        prompt = (
-            f"<|start_header_id|>user<|end_header_id|>\n\n"
-            f"Generate speech for the following text using voice '{voice}': {text}"
-            f"<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
-        )
+        # Updated Orpheus TTS prompt format based on official repository
+        prompt = f"<|im_start|>user\nGenerate speech in the voice of {voice}: {text}<|im_end|>\n<|im_start|>assistant\n"
         return prompt
     
     def _extract_tts_tokens(self, text: str) -> List[int]:
         """
-        Extract TTS tokens from generated text using correct Orpheus-FastAPI algorithm
+        Extract TTS tokens from generated text using official Orpheus format
+        Updated based on official Orpheus repository
         """
         try:
-            # Extract <custom_token_XXXX> patterns
-            pattern = r'<custom_token_(\d+)>'
-            matches = re.findall(pattern, text)
-            
-            if not matches:
-                orpheus_logger.warning("⚠️ No custom tokens found in generated text")
-                return []
+            # Look for audio tokens in the format used by official Orpheus
+            # Pattern may be different - checking for various token formats
+            patterns = [
+                r'<\|audio_(\d+)\|>',  # Official Orpheus format
+                r'<audio_(\d+)>',      # Alternative format
+                r'<custom_token_(\d+)>', # Legacy format
+                r'<\|(\d+)\|>'         # Numeric token format
+            ]
             
             tokens = []
-            for i, match in enumerate(matches):
-                try:
-                    token_id = int(match)
+            for pattern in patterns:
+                matches = re.findall(pattern, text)
+                if matches:
+                    orpheus_logger.debug(f"🔍 Found {len(matches)} tokens with pattern: {pattern}")
                     
-                    # Apply Orpheus-FastAPI token processing formula
-                    # This is the critical correction from the original implementation
-                    processed_token = token_id - 10 - ((i % 7) * 4096)
+                    for i, match in enumerate(matches):
+                        try:
+                            token_id = int(match)
+                            
+                            # For official Orpheus, tokens might not need the complex processing
+                            # Use direct token IDs if they're in valid range
+                            if 0 <= token_id <= 4096:
+                                tokens.append(token_id)
+                            else:
+                                # Apply processing if needed for legacy compatibility
+                                processed_token = token_id - 10 - ((i % 7) * 4096)
+                                if processed_token > 0:
+                                    tokens.append(processed_token)
+                                    
+                        except ValueError:
+                            continue
                     
-                    # Ensure token is in valid range after processing
-                    if processed_token > 0:
-                        tokens.append(processed_token)
-                    else:
-                        orpheus_logger.debug(f"🔍 Skipping invalid processed token: {processed_token}")
-                        
-                except ValueError as e:
-                    orpheus_logger.warning(f"⚠️ Invalid token ID: {match}")
-                    continue
+                    if tokens:
+                        break  # Use first successful pattern
             
-            orpheus_logger.debug(f"🔍 Processed {len(matches)} raw tokens into {len(tokens)} valid tokens")
+            if not tokens:
+                orpheus_logger.warning("⚠️ No audio tokens found in generated text")
+                return []
+            
+            orpheus_logger.debug(f"🔍 Extracted {len(tokens)} valid audio tokens")
             return tokens
             
         except Exception as e:

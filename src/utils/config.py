@@ -74,7 +74,7 @@ class TTSVoicesConfig(BaseModel):
 
 class TTSOrpheusDirectConfig(BaseModel):
     """Configuration for direct Orpheus model integration"""
-    model_name: str = "mistralai/Orpheus-Mini-3B-2507"
+    model_name: str = "canopy-ai/Orpheus-3b"  # Correct Orpheus model
     device: str = "cuda"
     torch_dtype: str = "float16"
     max_new_tokens: int = 1000

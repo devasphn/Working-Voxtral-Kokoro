@@ -172,6 +172,7 @@ transformers>=4.54.0
 accelerate>=0.25.0
 datasets>=2.16.0
 tokenizers>=0.15.0
+mistral-common>=1.0.0
 
 # Audio processing
 librosa>=0.10.1
@@ -254,13 +255,13 @@ print("🔄 Pre-caching Orpheus model...")
 try:
     from transformers import AutoTokenizer, AutoModelForCausalLM
     tokenizer = AutoTokenizer.from_pretrained(
-        "mistralai/Orpheus-Mini-3B-2507",
+        "canopy-ai/Orpheus-3b",
         cache_dir="./model_cache"
     )
     print("✅ Orpheus tokenizer cached")
     
     model = AutoModelForCausalLM.from_pretrained(
-        "mistralai/Orpheus-Mini-3B-2507",
+        "canopy-ai/Orpheus-3b",
         cache_dir="./model_cache",
         torch_dtype="auto",
         device_map="auto" if __import__('torch').cuda.is_available() else None
