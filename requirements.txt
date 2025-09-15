@@ -11,7 +11,7 @@ tokenizers>=0.15.0
 mistral-common[audio]>=1.4.0
 
 # Orpheus TTS - Official Package
-orpheus-tts
+orpheus-speech
 
 # Audio Processing
 librosa>=0.10.1
