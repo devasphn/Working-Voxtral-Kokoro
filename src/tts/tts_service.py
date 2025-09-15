@@ -11,7 +11,7 @@ from typing import Dict, Any, Optional, List, AsyncGenerator
 from io import BytesIO
 import wave
 
-from .orpheus_tts_engine import OrpheusTTSEngine
+from .tts_service_perfect import tts_service_perfect
 from src.utils.config import config
 
 # Setup logging
@@ -25,7 +25,7 @@ class TTSService:
     """
     
     def __init__(self):
-        self.engine = OrpheusTTSEngine()
+        self.engine = tts_service_perfect
         self.is_initialized = False
         
         # Configuration from config file

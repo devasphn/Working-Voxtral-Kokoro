@@ -74,12 +74,9 @@ class TTSVoicesConfig(BaseModel):
 
 class TTSOrpheusDirectConfig(BaseModel):
     """Configuration for direct Orpheus model integration"""
-    model_name: str = "canopy-ai/Orpheus-3b"  # Correct Orpheus model
-    device: str = "cuda"
-    torch_dtype: str = "float16"
-    max_new_tokens: int = 1000
-    temperature: float = 0.1
-    top_p: float = 0.95
+    model_name: str = "canopylabs/orpheus-tts-0.1-finetune-prod"  # CORRECT Orpheus model
+    max_model_len: int = 2048  # As per official example
+    sample_rate: int = 24000   # As per official example
     
 class TTSOrpheusServerConfig(BaseModel):
     """Legacy configuration for Orpheus-FastAPI server (deprecated)"""

@@ -13,7 +13,7 @@ import gc
 
 # Import model classes
 from src.models.voxtral_model_realtime import VoxtralModel
-from src.tts.orpheus_direct_model import OrpheusDirectModel
+from src.tts.orpheus_perfect_model import OrpheusPerfectModel
 from src.utils.gpu_memory_manager import GPUMemoryManager, InsufficientVRAMError
 
 # Setup logging
@@ -150,7 +150,7 @@ class UnifiedModelManager:
             start_time = time.time()
             
             # Create Orpheus model
-            self.orpheus_model = OrpheusDirectModel()
+            self.orpheus_model = OrpheusPerfectModel()
             
             # Initialize with shared memory pool
             device = self.gpu_memory_manager.device
@@ -279,7 +279,7 @@ class UnifiedModelManager:
             raise ModelInitializationError("Voxtral model not initialized")
         return self.voxtral_model
     
-    async def get_orpheus_model(self) -> Optional[OrpheusDirectModel]:
+    async def get_orpheus_model(self) -> Optional[OrpheusPerfectModel]:
         """Get initialized Orpheus model"""
         if not self.is_initialized or not self.orpheus_initialized:
             raise ModelInitializationError("Orpheus model not initialized")
