@@ -150,7 +150,7 @@ class TTSService:
         """
         try:
             # Use the engine to generate audio
-            audio_data = await self.engine.generate_audio(text, voice)
+            audio_data = await self.engine.generate_speech(text, voice)
             if audio_data:
                 return [audio_data]
             else:

@@ -1,95 +1,39 @@
-# Perfect Voxtral + Orpheus TTS Requirements
-# Researched and optimized for compatibility - NO CONFLICTS
+# PERFECT Voxtral + Orpheus TTS Requirements
+# Researched exact versions - NO CONFLICTS
 
-# ============================================================================
-# CORE AI/ML STACK - Carefully version-pinned for compatibility
-# ============================================================================
+# Core AI/ML Stack
+torch>=2.1.0
+torchaudio>=2.1.0
+torchvision>=0.16.0
+transformers>=4.54.0
+accelerate>=0.25.0
+tokenizers>=0.15.0
+mistral-common[audio]>=1.4.0
 
-# PyTorch with CUDA 12.1 support
-torch>=2.1.0,<2.5.0
-torchaudio>=2.1.0,<2.5.0
-torchvision>=0.16.0,<0.20.0
+# Orpheus TTS - Official Package
+orpheus-tts>=0.1.0
 
-# Transformers - Compatible with Voxtral-Mini-3B-2507
-transformers>=4.54.0,<4.60.0
-accelerate>=0.25.0,<0.35.0
-tokenizers>=0.15.0,<0.20.0
+# Audio Processing
+librosa>=0.10.1
+soundfile>=0.12.1
+numpy>=1.24.0
+scipy>=1.11.0
 
-# Mistral Common - Latest with chunking improvements
-mistral-common[audio]>=1.4.0,<2.0.0
+# Web Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+websockets>=12.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+python-multipart>=0.0.6
+aiofiles>=23.2.1
+httpx>=0.25.0
 
-# ============================================================================
-# ORPHEUS TTS - Official Package (NO SNAC, NO VLLM CONFLICTS)
-# ============================================================================
+# Utilities
+pyyaml>=6.0.1
+python-dotenv>=1.0.0
+psutil>=5.9.0
 
-# Official Orpheus TTS package - handles everything internally
-orpheus-tts>=0.1.0,<1.0.0
-
-# ============================================================================
-# AUDIO PROCESSING - Minimal and compatible
-# ============================================================================
-
-# Core audio libraries
-librosa>=0.10.1,<0.11.0
-soundfile>=0.12.1,<0.13.0
-numpy>=1.24.0,<1.27.0
-scipy>=1.11.0,<1.14.0
-
-# ============================================================================
-# WEB FRAMEWORK - FastAPI stack
-# ============================================================================
-
-# FastAPI and server
-fastapi>=0.104.0,<0.115.0
-uvicorn[standard]>=0.24.0,<0.31.0
-websockets>=12.0,<14.0
-
-# Pydantic v2 - properly pinned
-pydantic>=2.5.0,<3.0.0
-pydantic-settings>=2.1.0,<3.0.0
-
-# Additional web dependencies
-python-multipart>=0.0.6,<0.1.0
-aiofiles>=23.2.1,<24.0.0
-httpx>=0.25.0,<0.28.0
-
-# ============================================================================
-# UTILITIES AND CONFIGURATION
-# ============================================================================
-
-# Configuration
-pyyaml>=6.0.1,<7.0.0
-python-dotenv>=1.0.0,<2.0.0
-
-# System utilities
-psutil>=5.9.0,<6.0.0
-
-# ============================================================================
-# DEVELOPMENT AND TESTING
-# ============================================================================
-
-# Testing framework
-pytest>=7.4.0,<8.0.0
-pytest-asyncio>=0.21.0,<0.24.0
-
-# Code quality
-black>=23.0.0,<25.0.0
-isort>=5.12.0,<6.0.0
-
-# ============================================================================
-# OPTIONAL PERFORMANCE ENHANCEMENTS
-# ============================================================================
-
-# Flash Attention (uncomment if GPU supports it - RTX 30xx/40xx/A100+)
-# flash-attn>=2.5.0,<3.0.0
-
-# ============================================================================
-# EXPLICITLY EXCLUDED PACKAGES (to prevent conflicts)
-# ============================================================================
-
-# DO NOT INSTALL THESE - they cause conflicts:
-# - snac (Orpheus TTS handles audio conversion internally)
-# - vllm (conflicts with transformers versions)
-# - orpheus-fastapi (we use direct integration)
-# - pyttsx3 (not needed with Orpheus TTS)
-# - espeak-ng (not needed with Orpheus TTS)
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
