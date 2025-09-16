@@ -12,13 +12,28 @@ from typing import Dict, Any, Optional, List, AsyncGenerator
 from threading import Lock
 import gc
 
-# Import official Orpheus TTS
-try:
-    from orpheus_tts import OrpheusModel
-    ORPHEUS_AVAILABLE = True
-except ImportError:
-    ORPHEUS_AVAILABLE = False
-    OrpheusModel = None
+# Defer Orpheus TTS import to avoid immediate CUDA initialization
+ORPHEUS_AVAILABLE = False
+OrpheusModel = None
+
+def _import_orpheus():
+    """Lazy import of OrpheusModel to avoid immediate CUDA initialization"""
+    global ORPHEUS_AVAILABLE, OrpheusModel
+    if OrpheusModel is None:
+        try:
+            from orpheus_tts import OrpheusModel as _OrpheusModel
+            OrpheusModel = _OrpheusModel
+            ORPHEUS_AVAILABLE = True
+            orpheus_logger.info("✅ OrpheusModel imported successfully")
+        except ImportError as e:
+            ORPHEUS_AVAILABLE = False
+            OrpheusModel = None
+            orpheus_logger.error(f"❌ Failed to import OrpheusModel: {e}")
+        except Exception as e:
+            ORPHEUS_AVAILABLE = False
+            OrpheusModel = None
+            orpheus_logger.error(f"❌ Error during OrpheusModel import: {e}")
+    return ORPHEUS_AVAILABLE
 
 # Setup logging
 orpheus_logger = logging.getLogger("orpheus_streaming")
@@ -96,11 +111,11 @@ class OrpheusStreamingModel:
         try:
             orpheus_logger.info("🚀 Initializing Orpheus Streaming Model...")
             start_time = time.time()
-            
-            # Check if orpheus_tts is available
-            if not ORPHEUS_AVAILABLE:
+
+            # Import OrpheusModel with lazy loading
+            if not _import_orpheus():
                 raise ModelInitializationError(
-                    "orpheus_tts package not installed. Install with: pip install orpheus-tts"
+                    "orpheus_tts package not available or failed to import. Install with: pip install orpheus-speech"
                 )
             
             # EXACT initialization from your Flask example

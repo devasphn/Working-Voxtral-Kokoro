@@ -28,9 +28,9 @@ export CUDA_VISIBLE_DEVICES=0
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:256,roundup_power2_divisions:16
 
 # CRITICAL: Set HuggingFace token for Orpheus TTS access
-# Replace YOUR_HF_TOKEN with your actual Hugging Face token
-export HF_TOKEN="${HF_TOKEN:-YOUR_HF_TOKEN}"
-export HUGGING_FACE_HUB_TOKEN="${HUGGING_FACE_HUB_TOKEN:-YOUR_HF_TOKEN}"
+# Use provided token for model access
+export HF_TOKEN="${HF_TOKEN:-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}"
+export HUGGING_FACE_HUB_TOKEN="${HUGGING_FACE_HUB_TOKEN:-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}"
 
 # System optimization
 export OMP_NUM_THREADS=8
@@ -43,14 +43,14 @@ export VLLM_MAX_MODEL_LEN=32
 # Disable VLLM logging spam
 export VLLM_LOGGING_LEVEL=WARNING
 
-# Model paths
-export VOXTRAL_MODEL_PATH="mistralai/Mistral-7B-Instruct-v0.3"
-export ORPHEUS_MODEL_PATH="canopyai/Orpheus-TTS"
+# Model paths - FIXED to match config.yaml
+export VOXTRAL_MODEL_PATH="mistralai/Voxtral-Mini-3B-2507"
+export ORPHEUS_MODEL_PATH="canopylabs/orpheus-tts-0.1-finetune-prod"
 
 echo "🔧 Environment configured successfully"
 echo "📝 Starting unified model system..."
 
-# Start the unified system
-python3 -u src/models/unified_model_manager.py 2>&1 | tee logs/voxtral_streaming.log
+# Start the unified system via the correct entry point
+python3 -u -m src.api.ui_server_realtime 2>&1 | tee logs/voxtral_streaming.log
 
 echo "🎉 System startup complete!"

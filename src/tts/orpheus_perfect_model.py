@@ -10,8 +10,24 @@ from typing import Dict, Any, Optional, List, AsyncGenerator
 from threading import Lock
 import gc
 
-# Import the actual streaming model
-from .orpheus_streaming_model import OrpheusStreamingModel, ModelInitializationError, AudioGenerationError
+# Import the actual streaming model and mock fallback
+try:
+    from .orpheus_streaming_model import OrpheusStreamingModel, ModelInitializationError, AudioGenerationError
+    ORPHEUS_STREAMING_AVAILABLE = True
+except Exception as e:
+    perfect_logger.warning(f"OrpheusStreamingModel not available: {e}")
+    ORPHEUS_STREAMING_AVAILABLE = False
+
+# Import mock TTS as fallback
+from .mock_tts_service import MockTTSService
+
+class ModelInitializationError(Exception):
+    """Raised when model initialization fails"""
+    pass
+
+class AudioGenerationError(Exception):
+    """Raised when TTS generation fails"""
+    pass
 
 # Setup logging
 perfect_logger = logging.getLogger("orpheus_perfect")
@@ -24,15 +40,17 @@ class OrpheusPerfectModel:
     """
     
     def __init__(self):
-        self.streaming_model = OrpheusStreamingModel()
+        self.streaming_model = None
+        self.mock_model = None
+        self.use_mock = False
         self.is_initialized = False
         self.initialization_lock = Lock()
-        
+
         # Performance tracking
         self.generation_count = 0
         self.total_generation_time = 0.0
         self.last_generation_time = 0.0
-        
+
         perfect_logger.info("OrpheusPerfectModel wrapper initialized")
     
     async def initialize(self, device: str = "cuda", shared_memory_pool: Optional[Any] = None) -> bool:
@@ -47,24 +65,44 @@ class OrpheusPerfectModel:
                 
                 perfect_logger.info("🚀 Initializing OrpheusPerfectModel...")
                 start_time = time.time()
-                
-                # Initialize the underlying streaming model
-                success = await self.streaming_model.initialize()
-                
+
+                # Try to initialize the real Orpheus streaming model first
+                if ORPHEUS_STREAMING_AVAILABLE:
+                    try:
+                        self.streaming_model = OrpheusStreamingModel()
+                        success = await self.streaming_model.initialize()
+
+                        if success:
+                            self.use_mock = False
+                            self.is_initialized = True
+                            init_time = time.time() - start_time
+                            perfect_logger.info(f"🎉 OrpheusPerfectModel (real) initialized successfully in {init_time:.2f}s")
+
+                            # Log device and memory pool info if provided
+                            if device:
+                                perfect_logger.info(f"🎯 Target device: {device}")
+                            if shared_memory_pool:
+                                perfect_logger.info("🏊 Using shared memory pool for optimization")
+
+                            return True
+                        else:
+                            perfect_logger.warning("⚠️ Real Orpheus model failed, falling back to mock")
+                    except Exception as e:
+                        perfect_logger.warning(f"⚠️ Real Orpheus model error: {e}, falling back to mock")
+
+                # Fall back to mock TTS service
+                perfect_logger.info("🎭 Initializing Mock TTS fallback...")
+                self.mock_model = MockTTSService()
+                success = await self.mock_model.initialize()
+
                 if success:
+                    self.use_mock = True
                     self.is_initialized = True
                     init_time = time.time() - start_time
-                    perfect_logger.info(f"🎉 OrpheusPerfectModel initialized successfully in {init_time:.2f}s")
-                    
-                    # Log device and memory pool info if provided
-                    if device:
-                        perfect_logger.info(f"🎯 Target device: {device}")
-                    if shared_memory_pool:
-                        perfect_logger.info("🏊 Using shared memory pool for optimization")
-                    
+                    perfect_logger.info(f"🎉 OrpheusPerfectModel (mock) initialized successfully in {init_time:.2f}s")
                     return True
                 else:
-                    perfect_logger.error("❌ OrpheusPerfectModel initialization failed")
+                    perfect_logger.error("❌ Both real and mock TTS initialization failed")
                     return False
                     
         except Exception as e:
@@ -82,8 +120,11 @@ class OrpheusPerfectModel:
             generation_start = time.time()
             perfect_logger.info(f"🎵 Generating speech: '{text[:50]}...' with voice '{voice or 'default'}'")
             
-            # Use the streaming model's generate_speech method
-            audio_data = await self.streaming_model.generate_speech(text, voice)
+            # Use the appropriate model's generate_speech method
+            if self.use_mock:
+                audio_data = await self.mock_model.generate_speech(text, voice)
+            else:
+                audio_data = await self.streaming_model.generate_speech(text, voice)
             
             generation_time = time.time() - generation_start
             self.last_generation_time = generation_time
@@ -108,9 +149,13 @@ class OrpheusPerfectModel:
         try:
             perfect_logger.info(f"🎵 Streaming speech: '{text[:50]}...' with voice '{voice or 'default'}'")
             
-            # Use the streaming model's generate_speech_stream method
-            async for chunk in self.streaming_model.generate_speech_stream(text, voice):
-                yield chunk
+            # Use the appropriate model's generate_speech_stream method
+            if self.use_mock:
+                async for chunk in self.mock_model.generate_speech_stream(text, voice):
+                    yield chunk
+            else:
+                async for chunk in self.streaming_model.generate_speech_stream(text, voice):
+                    yield chunk
                 
         except Exception as e:
             perfect_logger.error(f"❌ Streaming speech generation failed: {e}")
@@ -118,27 +163,38 @@ class OrpheusPerfectModel:
     
     def get_available_voices(self) -> List[str]:
         """Get list of available voices"""
-        return self.streaming_model.get_available_voices()
+        if self.use_mock:
+            return self.mock_model.get_available_voices()
+        elif self.streaming_model:
+            return self.streaming_model.get_available_voices()
+        else:
+            return ["ऋतिका"]  # Default fallback
     
     def get_model_info(self) -> Dict[str, Any]:
         """Get comprehensive model information"""
-        base_info = self.streaming_model.get_model_info()
-        
+        if self.use_mock:
+            base_info = self.mock_model.get_model_info() if self.mock_model else {}
+        elif self.streaming_model:
+            base_info = self.streaming_model.get_model_info()
+        else:
+            base_info = {"model_name": "not_initialized"}
+
         # Add perfect model wrapper info
         perfect_info = {
             "wrapper_type": "OrpheusPerfectModel",
             "is_initialized": self.is_initialized,
+            "using_mock": self.use_mock,
             "generation_statistics": {
                 "total_generations": self.generation_count,
                 "average_generation_time_s": (
-                    self.total_generation_time / self.generation_count 
+                    self.total_generation_time / self.generation_count
                     if self.generation_count > 0 else 0.0
                 ),
                 "last_generation_time_s": self.last_generation_time
             },
             "underlying_model": base_info
         }
-        
+
         return perfect_info
     
     async def cleanup(self):
@@ -146,8 +202,11 @@ class OrpheusPerfectModel:
         try:
             perfect_logger.info("🧹 Cleaning up OrpheusPerfectModel...")
             
-            # Cleanup the underlying streaming model
-            await self.streaming_model.cleanup()
+            # Cleanup the underlying models
+            if self.streaming_model:
+                await self.streaming_model.cleanup()
+            if self.mock_model:
+                await self.mock_model.cleanup()
             
             # Reset state
             self.is_initialized = False

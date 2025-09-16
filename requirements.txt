@@ -17,7 +17,7 @@ tokenizers>=0.15.0
 mistral-common[audio]>=1.8.1
 
 # Orpheus TTS (CORRECT PACKAGE NAME from official repo)
-orpheus-speech
+orpheus-tts
 vllm==0.7.3
 
 # Audio Processing
