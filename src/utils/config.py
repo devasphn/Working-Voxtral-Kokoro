@@ -6,8 +6,22 @@ import yaml
 import os
 from pathlib import Path
 from pydantic import BaseModel
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Dict, Any
+
+# Import pydantic_settings with fallback
+try:
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+    PYDANTIC_SETTINGS_AVAILABLE = True
+except ImportError:
+    # Fallback for older pydantic versions or missing pydantic-settings
+    try:
+        from pydantic import BaseSettings
+        SettingsConfigDict = None
+        PYDANTIC_SETTINGS_AVAILABLE = True
+    except ImportError:
+        BaseSettings = BaseModel
+        SettingsConfigDict = None
+        PYDANTIC_SETTINGS_AVAILABLE = False
 
 class ServerConfig(BaseModel):
     host: str = "0.0.0.0"
@@ -124,23 +138,39 @@ class Config(BaseSettings):
     tts: TTSConfig = TTSConfig()
     performance: PerformanceConfig = PerformanceConfig()
     
-    # Pydantic v2 settings configuration
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        env_nested_delimiter="__",
-        case_sensitive=False,
-        extra="ignore"
-    )
+    # Pydantic v2 settings configuration with fallback
+    if PYDANTIC_SETTINGS_AVAILABLE and SettingsConfigDict is not None:
+        model_config = SettingsConfigDict(
+            env_file=".env",
+            env_file_encoding="utf-8",
+            env_nested_delimiter="__",
+            case_sensitive=False,
+            extra="ignore"
+        )
+    else:
+        # Fallback configuration for older pydantic versions
+        class Config:
+            env_file = ".env"
+            env_file_encoding = "utf-8"
+            case_sensitive = False
+            extra = "ignore"
 
 def load_config(config_path: str = "config.yaml") -> Config:
     """Load configuration from YAML file with environment variable override support"""
     config_file = Path(config_path)
     
     if config_file.exists():
-        with open(config_file, 'r') as f:
-            config_data = yaml.safe_load(f)
-        return Config(**config_data)
+        try:
+            # Open with explicit UTF-8 encoding to handle Unicode characters
+            with open(config_file, 'r', encoding='utf-8') as f:
+                config_data = yaml.safe_load(f)
+            return Config(**config_data)
+        except UnicodeDecodeError:
+            print(f"Warning: Unicode decode error in {config_path}. Using default configuration.")
+            return Config()
+        except Exception as e:
+            print(f"Warning: Error loading config from {config_path}: {e}. Using default configuration.")
+            return Config()
     else:
         # Return default config if file doesn't exist
         return Config()

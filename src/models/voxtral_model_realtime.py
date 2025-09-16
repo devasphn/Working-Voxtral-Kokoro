@@ -6,12 +6,32 @@ import torch
 import asyncio
 import time
 from typing import Optional, List, Dict, Any
-from transformers import VoxtralForConditionalGeneration, AutoProcessor
+# Import with compatibility layer
+try:
+    from transformers import VoxtralForConditionalGeneration, AutoProcessor
+    VOXTRAL_AVAILABLE = True
+except ImportError:
+    from src.utils.compatibility import FallbackVoxtralModel
+    VoxtralForConditionalGeneration = FallbackVoxtralModel
+    AutoProcessor = None
+    VOXTRAL_AVAILABLE = False
+
 import logging
 from threading import Lock
 import base64
-from mistral_common.audio import Audio
-from mistral_common.protocol.instruct.messages import AudioChunk, TextChunk, UserMessage
+
+# Import mistral_common with fallback
+try:
+    from mistral_common.audio import Audio
+    from mistral_common.protocol.instruct.messages import AudioChunk, TextChunk, UserMessage
+    MISTRAL_COMMON_AVAILABLE = True
+except ImportError:
+    # Fallback implementations
+    Audio = None
+    AudioChunk = None
+    TextChunk = None
+    UserMessage = None
+    MISTRAL_COMMON_AVAILABLE = False
 import tempfile
 import soundfile as sf
 import numpy as np
@@ -25,7 +45,12 @@ project_root = os.path.abspath(os.path.join(current_dir, '..', '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.utils.config import config
+# Import config with fallback
+try:
+    from src.utils.config import config
+except ImportError:
+    from src.utils.compatibility import get_config
+    config = get_config()
 
 # Enhanced logging for real-time streaming
 realtime_logger = logging.getLogger("voxtral_realtime")

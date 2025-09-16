@@ -25,13 +25,15 @@ async def test_perfect_system():
             print("   ✅ OrpheusPerfectModel imported")
         except ImportError as e:
             print(f"   ❌ OrpheusPerfectModel import failed: {e}")
+            print("   💡 This file should have been created by the setup process")
             return False
-        
+
         try:
             from src.tts.tts_service_perfect import TTSServicePerfect
             print("   ✅ TTSServicePerfect imported")
         except ImportError as e:
             print(f"   ❌ TTSServicePerfect import failed: {e}")
+            print("   💡 This file should have been created by the setup process")
             return False
         
         try:

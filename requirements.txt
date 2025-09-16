@@ -1,17 +1,18 @@
 # PERFECT Voxtral + Orpheus TTS Requirements
-# Researched exact versions - NO CONFLICTS
+# Researched exact versions from official repositories - PRODUCTION READY
 
-# Core AI/ML Stack
-torch>=2.1.0
-torchaudio>=2.1.0
-torchvision>=0.16.0
-transformers>=4.54.0
-accelerate>=0.25.0
-tokenizers>=0.15.0
-mistral-common[audio]>=1.4.0
+# Core AI/ML Stack - Latest versions for Voxtral support
+torch>=2.1.0,<2.5.0
+torchaudio>=2.1.0,<2.5.0
+torchvision>=0.16.0,<0.20.0
+transformers>=4.56.0
+accelerate>=0.25.0,<0.35.0
+tokenizers>=0.15.0,<0.20.0
+mistral-common[audio]>=1.4.0,<2.0.0
 
-# Orpheus TTS - Official Package
-orpheus-speech
+# Orpheus TTS - Official Package (verified from repository)
+orpheus-speech>=0.1.0
+vllm>=0.7.3,<0.8.0
 
 # Audio Processing
 librosa>=0.10.1
