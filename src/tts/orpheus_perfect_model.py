@@ -1,261 +1,205 @@
 """
-Perfect Orpheus TTS Integration - Based on Official Example
-Uses the exact API pattern from canopyai/Orpheus-TTS repository
+Orpheus Perfect Model - Production-Ready Wrapper
+Provides the interface expected by the unified model manager while using OrpheusStreamingModel
 """
 
-import torch
 import asyncio
 import time
 import logging
-import wave
-import io
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, AsyncGenerator
 from threading import Lock
 import gc
 
-# Import official Orpheus TTS - exactly as in the example
-try:
-    from orpheus_tts import OrpheusModel
-    ORPHEUS_AVAILABLE = True
-except ImportError:
-    ORPHEUS_AVAILABLE = False
-    OrpheusModel = None
+# Import the actual streaming model
+from .orpheus_streaming_model import OrpheusStreamingModel, ModelInitializationError, AudioGenerationError
 
 # Setup logging
-orpheus_logger = logging.getLogger("orpheus_perfect")
-orpheus_logger.setLevel(logging.INFO)
-
-class ModelInitializationError(Exception):
-    """Raised when Orpheus model initialization fails"""
-    pass
-
-class AudioGenerationError(Exception):
-    """Raised when TTS generation fails"""
-    pass
+perfect_logger = logging.getLogger("orpheus_perfect")
+perfect_logger.setLevel(logging.INFO)
 
 class OrpheusPerfectModel:
     """
-    Perfect Orpheus TTS Integration - Based on Official Example
-    Uses the exact API pattern from the official repository
+    Production-ready Orpheus model wrapper that provides the interface
+    expected by the unified model manager while using the streaming implementation
     """
     
     def __init__(self):
-        self.model = None
-        self.model_lock = Lock()
+        self.streaming_model = OrpheusStreamingModel()
         self.is_initialized = False
+        self.initialization_lock = Lock()
         
-        # EXACT configuration from official example
-        self.model_name = "canopylabs/orpheus-tts-0.1-finetune-prod"
-        self.max_model_len = 2048
-        self.sample_rate = 24000  # As per official example
+        # Performance tracking
+        self.generation_count = 0
+        self.total_generation_time = 0.0
+        self.last_generation_time = 0.0
         
-        # Available voices from official documentation
-        self.available_voices = [
-            # English voices
-            "tara", "leah", "jess", "leo", "dan", "mia", "zac", "zoe",
-            # Multi-language voices (if supported)
-            "pierre", "amelie", "marie",  # French
-            "jana", "thomas", "max",      # German
-            "유나", "준서",                # Korean
-            "长乐", "白芷",                # Mandarin
-            "javi", "sergio", "maria",    # Spanish
-            "pietro", "giulia", "carlo"   # Italian
-        ]
-        self.default_voice = "tara"  # Using English as default for reliability
-        
-        orpheus_logger.info(f"OrpheusPerfectModel initialized with model: {self.model_name}")
+        perfect_logger.info("OrpheusPerfectModel wrapper initialized")
     
-    async def initialize(self, device: str = None) -> bool:
+    async def initialize(self, device: str = "cuda", shared_memory_pool: Optional[Any] = None) -> bool:
         """
-        Initialize Orpheus model using the EXACT official API
+        Initialize the Orpheus model with optional device and memory pool
         """
         try:
-            orpheus_logger.info("🚀 Initializing Perfect Orpheus Model...")
-            start_time = time.time()
-            
-            # Check if orpheus_tts is available
-            if not ORPHEUS_AVAILABLE:
-                raise ModelInitializationError(
-                    "orpheus_tts package not installed. Install with: pip install orpheus-tts"
-                )
-            
-            # Initialize using EXACT official API pattern
-            orpheus_logger.info(f"📥 Loading Orpheus model: {self.model_name}")
-            
-            # EXACT initialization from official example
-            self.model = OrpheusModel(
-                model_name=self.model_name,
-                max_model_len=self.max_model_len
-            )
-            
-            orpheus_logger.info("✅ Orpheus model loaded successfully with official API")
-            
-            # Test the model with a simple generation
-            await self._test_model()
-            
-            self.is_initialized = True
-            init_time = time.time() - start_time
-            orpheus_logger.info(f"🎉 Perfect Orpheus Model initialized in {init_time:.2f}s")
-            
-            return True
-            
-        except Exception as e:
-            orpheus_logger.error(f"❌ Orpheus model initialization failed: {e}")
-            import traceback
-            orpheus_logger.error(f"❌ Full traceback: {traceback.format_exc()}")
-            raise ModelInitializationError(f"Failed to initialize Orpheus model: {e}")
-    
-    async def _test_model(self):
-        """Test the model with a simple generation to ensure it works"""
-        try:
-            orpheus_logger.info("🧪 Testing model with simple generation...")
-            
-            # Simple test generation
-            test_prompt = "Hello, this is a test."
-            syn_tokens = self.model.generate_speech(
-                prompt=test_prompt,
-                voice=self.default_voice
-            )
-            
-            # Count chunks to verify streaming works
-            chunk_count = 0
-            for _ in syn_tokens:
-                chunk_count += 1
-                if chunk_count >= 3:  # Just test first few chunks
-                    break
-            
-            if chunk_count > 0:
-                orpheus_logger.info(f"✅ Model test successful - generated {chunk_count} audio chunks")
-            else:
-                raise Exception("No audio chunks generated in test")
+            with self.initialization_lock:
+                if self.is_initialized:
+                    perfect_logger.info("✅ OrpheusPerfectModel already initialized")
+                    return True
                 
+                perfect_logger.info("🚀 Initializing OrpheusPerfectModel...")
+                start_time = time.time()
+                
+                # Initialize the underlying streaming model
+                success = await self.streaming_model.initialize()
+                
+                if success:
+                    self.is_initialized = True
+                    init_time = time.time() - start_time
+                    perfect_logger.info(f"🎉 OrpheusPerfectModel initialized successfully in {init_time:.2f}s")
+                    
+                    # Log device and memory pool info if provided
+                    if device:
+                        perfect_logger.info(f"🎯 Target device: {device}")
+                    if shared_memory_pool:
+                        perfect_logger.info("🏊 Using shared memory pool for optimization")
+                    
+                    return True
+                else:
+                    perfect_logger.error("❌ OrpheusPerfectModel initialization failed")
+                    return False
+                    
         except Exception as e:
-            orpheus_logger.error(f"❌ Model test failed: {e}")
-            raise
+            perfect_logger.error(f"❌ OrpheusPerfectModel initialization error: {e}")
+            raise ModelInitializationError(f"Failed to initialize OrpheusPerfectModel: {e}")
     
     async def generate_speech(self, text: str, voice: str = None) -> bytes:
         """
-        Generate speech using EXACT official API pattern
-        Based on the exact example from canopyai/Orpheus-TTS
+        Generate speech audio from text
         """
         if not self.is_initialized:
-            raise AudioGenerationError("Model not initialized")
-        
-        voice = voice or self.default_voice
+            raise AudioGenerationError("OrpheusPerfectModel not initialized")
         
         try:
-            orpheus_logger.info(f"🎵 Generating speech: '{text[:50]}...' with voice '{voice}'")
-            generation_start = time.monotonic()  # Using monotonic as in official example
+            generation_start = time.time()
+            perfect_logger.info(f"🎵 Generating speech: '{text[:50]}...' with voice '{voice or 'default'}'")
             
-            with self.model_lock:
-                # EXACT API call from official example
-                syn_tokens = self.model.generate_speech(
-                    prompt=text,
-                    voice=voice
-                )
-                
-                # EXACT WAV file creation from official example
-                audio_buffer = io.BytesIO()
-                
-                with wave.open(audio_buffer, "wb") as wf:
-                    wf.setnchannels(1)      # Mono - as in official example
-                    wf.setsampwidth(2)      # 16-bit - as in official example
-                    wf.setframerate(24000)  # 24kHz - as in official example
-                    
-                    total_frames = 0
-                    chunk_counter = 0
-                    
-                    # EXACT streaming processing from official example
-                    for audio_chunk in syn_tokens:  # output streaming
-                        chunk_counter += 1
-                        frame_count = len(audio_chunk) // (wf.getsampwidth() * wf.getnchannels())
-                        total_frames += frame_count
-                        wf.writeframes(audio_chunk)
-                
-                # Calculate metrics exactly as in official example
-                duration = total_frames / wf.getframerate()
-                end_time = time.monotonic()
-                generation_time = end_time - generation_start
-                
-                # Get the complete WAV file
-                audio_buffer.seek(0)
-                audio_data = audio_buffer.read()
-                
-                orpheus_logger.info(
-                    f"✅ Generated {duration:.2f}s of audio in {generation_time:.2f}s "
-                    f"({chunk_counter} chunks, {len(audio_data)} bytes)"
-                )
-                
-                return audio_data
+            # Use the streaming model's generate_speech method
+            audio_data = await self.streaming_model.generate_speech(text, voice)
+            
+            generation_time = time.time() - generation_start
+            self.last_generation_time = generation_time
+            self.total_generation_time += generation_time
+            self.generation_count += 1
+            
+            perfect_logger.info(f"✅ Speech generated in {generation_time:.2f}s ({len(audio_data)} bytes)")
+            
+            return audio_data
             
         except Exception as e:
-            orpheus_logger.error(f"❌ Speech generation failed: {e}")
+            perfect_logger.error(f"❌ Speech generation failed: {e}")
             raise AudioGenerationError(f"Speech generation failed: {e}")
+    
+    async def generate_speech_stream(self, text: str, voice: str = None) -> AsyncGenerator[bytes, None]:
+        """
+        Generate streaming speech audio from text
+        """
+        if not self.is_initialized:
+            raise AudioGenerationError("OrpheusPerfectModel not initialized")
+        
+        try:
+            perfect_logger.info(f"🎵 Streaming speech: '{text[:50]}...' with voice '{voice or 'default'}'")
+            
+            # Use the streaming model's generate_speech_stream method
+            async for chunk in self.streaming_model.generate_speech_stream(text, voice):
+                yield chunk
+                
+        except Exception as e:
+            perfect_logger.error(f"❌ Streaming speech generation failed: {e}")
+            raise AudioGenerationError(f"Streaming speech generation failed: {e}")
     
     def get_available_voices(self) -> List[str]:
         """Get list of available voices"""
-        return self.available_voices.copy()
+        return self.streaming_model.get_available_voices()
     
     def get_model_info(self) -> Dict[str, Any]:
-        """Get model information and statistics"""
-        return {
-            "model_name": self.model_name,
-            "max_model_len": self.max_model_len,
+        """Get comprehensive model information"""
+        base_info = self.streaming_model.get_model_info()
+        
+        # Add perfect model wrapper info
+        perfect_info = {
+            "wrapper_type": "OrpheusPerfectModel",
             "is_initialized": self.is_initialized,
-            "available_voices": len(self.available_voices),
-            "default_voice": self.default_voice,
-            "sample_rate": self.sample_rate,
-            "api_version": "official_orpheus_tts",
-            "integration_type": "direct_streaming"
+            "generation_statistics": {
+                "total_generations": self.generation_count,
+                "average_generation_time_s": (
+                    self.total_generation_time / self.generation_count 
+                    if self.generation_count > 0 else 0.0
+                ),
+                "last_generation_time_s": self.last_generation_time
+            },
+            "underlying_model": base_info
         }
+        
+        return perfect_info
     
     async def cleanup(self):
         """Cleanup model resources"""
         try:
-            orpheus_logger.info("🧹 Cleaning up Perfect Orpheus Model resources...")
+            perfect_logger.info("🧹 Cleaning up OrpheusPerfectModel...")
             
-            if self.model:
-                del self.model
-                self.model = None
+            # Cleanup the underlying streaming model
+            await self.streaming_model.cleanup()
             
-            # Clear GPU cache if available
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            
-            # Force garbage collection
-            gc.collect()
-            
+            # Reset state
             self.is_initialized = False
-            orpheus_logger.info("✅ Cleanup completed")
+            self.generation_count = 0
+            self.total_generation_time = 0.0
+            self.last_generation_time = 0.0
+            
+            perfect_logger.info("✅ OrpheusPerfectModel cleanup completed")
             
         except Exception as e:
-            orpheus_logger.error(f"❌ Cleanup failed: {e}")
+            perfect_logger.error(f"❌ OrpheusPerfectModel cleanup failed: {e}")
 
 # Global instance for easy access
 orpheus_perfect_model = OrpheusPerfectModel()
 
-# Test function to verify the integration
-async def test_perfect_integration():
-    """Test the perfect integration"""
-    print("🧪 Testing Perfect Orpheus TTS Integration")
+# Test function for validation
+async def test_perfect_model():
+    """Test the perfect model wrapper"""
+    print("🧪 Testing OrpheusPerfectModel Wrapper")
     print("=" * 50)
     
     try:
         # Initialize
         await orpheus_perfect_model.initialize()
         
-        # Test generation with the exact example from the repository
-        test_prompt = '''Man, the way social media has, um, completely changed how we interact is just wild, right? Like, we're all connected 24/7 but somehow people feel more alone than ever. And don't even get me started on how it's messing with kids' self-esteem and mental health and whatnot.'''
-        
-        audio_data = await orpheus_perfect_model.generate_speech(test_prompt, "tara")
+        # Test generation
+        test_text = "Hello, this is a test of the perfect model wrapper."
+        audio_data = await orpheus_perfect_model.generate_speech(test_text, "tara")
         
         print(f"✅ Generated {len(audio_data)} bytes of audio")
-        print(f"📊 Model info: {orpheus_perfect_model.get_model_info()}")
+        
+        # Test streaming
+        print("Testing streaming generation...")
+        chunk_count = 0
+        total_bytes = 0
+        
+        async for chunk in orpheus_perfect_model.generate_speech_stream(test_text, "tara"):
+            chunk_count += 1
+            total_bytes += len(chunk)
+            if chunk_count <= 3:  # Show first few chunks
+                print(f"  Chunk {chunk_count}: {len(chunk)} bytes")
+        
+        print(f"✅ Streamed {chunk_count} chunks, {total_bytes} total bytes")
+        
+        # Show model info
+        info = orpheus_perfect_model.get_model_info()
+        print(f"📊 Model info: {info['wrapper_type']}, generations: {info['generation_statistics']['total_generations']}")
         
         # Cleanup
         await orpheus_perfect_model.cleanup()
         
-        print("🎉 Perfect integration test completed successfully!")
+        print("🎉 Perfect model wrapper test completed successfully!")
         
     except Exception as e:
         print(f"❌ Test failed: {e}")
@@ -263,4 +207,4 @@ async def test_perfect_integration():
         traceback.print_exc()
 
 if __name__ == "__main__":
-    asyncio.run(test_perfect_integration())
+    asyncio.run(test_perfect_model())
