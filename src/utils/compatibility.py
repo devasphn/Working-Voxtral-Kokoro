@@ -67,8 +67,8 @@ def check_mistral_common():
     return compat_manager.check_package("mistral-common", "mistral_common")
 
 def check_orpheus_tts():
-    """Check if orpheus-tts is available"""
-    return compat_manager.check_package("orpheus-tts", "orpheus_tts")
+    """Check if orpheus-speech is available"""
+    return compat_manager.check_package("orpheus-speech", "orpheus_tts")
 
 def check_pydantic_settings():
     """Check if pydantic-settings is available"""
@@ -197,7 +197,7 @@ def initialize_compatibility():
     packages_to_check = [
         ("transformers", "transformers"),
         ("mistral-common", "mistral_common"),
-        ("orpheus-tts", "orpheus_tts"),
+        ("orpheus-speech", "orpheus_tts"),
         ("pydantic-settings", "pydantic_settings"),
         ("vllm", "vllm"),
         ("torch", "torch"),

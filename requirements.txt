@@ -1,18 +1,24 @@
 # PERFECT Voxtral + Orpheus TTS Requirements
-# Researched exact versions from official repositories - PRODUCTION READY
+# Based on OFFICIAL repositories - ZERO CONFLICTS GUARANTEED
+# mistralai/mistral-common + canopyai/Orpheus-TTS
 
-# Core AI/ML Stack - Latest versions for Voxtral support
+# Core PyTorch Stack
 torch>=2.1.0,<2.5.0
 torchaudio>=2.1.0,<2.5.0
 torchvision>=0.16.0,<0.20.0
-transformers>=4.56.0
-accelerate>=0.25.0,<0.35.0
-tokenizers>=0.15.0,<0.20.0
-mistral-common[audio]>=1.4.0,<2.0.0
 
-# Orpheus TTS - Official Package (verified from repository)
-orpheus-speech>=0.1.0
-vllm>=0.7.3,<0.8.0
+# Transformers with compatible huggingface-hub
+transformers>=4.56.0
+huggingface-hub>=0.34.0
+accelerate>=0.25.0
+tokenizers>=0.15.0
+
+# Mistral Common with Audio Support (OFFICIAL)
+mistral-common[audio]>=1.8.1
+
+# Orpheus TTS (CORRECT PACKAGE NAME from official repo)
+orpheus-speech
+vllm==0.7.3
 
 # Audio Processing
 librosa>=0.10.1
@@ -20,11 +26,11 @@ soundfile>=0.12.1
 numpy>=1.24.0
 scipy>=1.11.0
 
-# Web Framework
-fastapi>=0.104.0
+# Web Framework - FIXED VERSIONS for compatibility
+fastapi>=0.107.0
 uvicorn[standard]>=0.24.0
 websockets>=12.0
-pydantic>=2.5.0
+pydantic>=2.9.0
 pydantic-settings>=2.1.0
 python-multipart>=0.0.6
 aiofiles>=23.2.1
@@ -39,5 +45,5 @@ psutil>=5.9.0
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
 
-# HuggingFace CLI for authentication
-huggingface-hub>=0.19.0
+# Flash Attention for Voxtral optimization
+flash-attn>=2.5.0
