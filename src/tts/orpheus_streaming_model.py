@@ -14,7 +14,7 @@ import gc
 
 # Import official Orpheus TTS
 try:
-    from orpheus_speech import OrpheusModel
+    from orpheus_tts import OrpheusModel
     ORPHEUS_AVAILABLE = True
 except ImportError:
     ORPHEUS_AVAILABLE = False
