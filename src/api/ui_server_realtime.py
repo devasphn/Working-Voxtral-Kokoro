@@ -427,6 +427,11 @@ async def home(request: Request):
         let silenceStartTime = null;
         let pendingResponse = false;
         let lastResponseText = '';  // For deduplication
+
+        // Audio playback queue management
+        let audioQueue = [];
+        let isPlayingAudio = false;
+        let currentAudio = null;
         
         // Enhanced configuration for continuous speech capture
         const CHUNK_SIZE = 4096;
@@ -628,47 +633,155 @@ async def home(request: Request):
         }
 
         function handleAudioResponse(data) {
-            log(`Received audio response for chunk ${data.chunk_id} with voice ${data.voice}`);
-
             try {
-                // Decode base64 audio data
-                const audioData = data.audio_data;
-                if (!audioData) {
-                    log('No audio data in response');
-                    return;
-                }
+                log(`🎵 Received TTS audio response for chunk ${data.chunk_id} (${data.audio_data.length} chars)`);
 
-                // Convert base64 to blob
-                const binaryString = atob(audioData);
-                const bytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                    bytes[i] = binaryString.charCodeAt(i);
-                }
-
-                // Create audio blob and play
-                const audioBlob = new Blob([bytes], { type: 'audio/wav' });
-                const audioUrl = URL.createObjectURL(audioBlob);
-                const audio = new Audio(audioUrl);
-
-                // Play the audio
-                audio.play().then(() => {
-                    log(`Playing TTS audio response (${data.metadata?.audio_duration || 'unknown'}s)`);
-                    updateStatus('🔊 Playing AI response...', 'success');
-                }).catch(error => {
-                    log(`Error playing audio: ${error}`);
-                    updateStatus('Error playing audio response', 'error');
+                // Add to audio queue for sequential playback
+                audioQueue.push({
+                    chunkId: data.chunk_id,
+                    audioData: data.audio_data,
+                    metadata: data.metadata || {},
+                    voice: data.voice || 'unknown'
                 });
 
-                // Clean up URL after playing
-                audio.addEventListener('ended', () => {
-                    URL.revokeObjectURL(audioUrl);
-                    updateStatus('Ready for conversation', 'success');
-                });
+                log(`🎵 Added audio to queue. Queue length: ${audioQueue.length}`);
+
+                // Start processing queue if not already playing
+                if (!isPlayingAudio) {
+                    processAudioQueue();
+                }
 
             } catch (error) {
-                log(`Error handling audio response: ${error}`);
+                log(`❌ Error handling audio response: ${error}`);
                 updateStatus('Error processing audio response', 'error');
+                console.error('Audio response error:', error);
             }
+        }
+
+        async function processAudioQueue() {
+            if (isPlayingAudio || audioQueue.length === 0) {
+                return;
+            }
+
+            isPlayingAudio = true;
+
+            while (audioQueue.length > 0) {
+                const audioItem = audioQueue.shift();
+
+                try {
+                    log(`🎵 Processing audio chunk ${audioItem.chunkId} from queue`);
+                    await playAudioItem(audioItem);
+                    log(`✅ Completed playing audio chunk ${audioItem.chunkId}`);
+                } catch (error) {
+                    log(`❌ Error playing audio chunk ${audioItem.chunkId}: ${error}`);
+                    console.error('Audio playback error:', error);
+                }
+
+                // Small delay between audio chunks to prevent overlap
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+
+            isPlayingAudio = false;
+            updateStatus('Ready for conversation', 'success');
+            log('🎵 Audio queue processing completed');
+        }
+
+        function playAudioItem(audioItem) {
+            return new Promise((resolve, reject) => {
+                try {
+                    const { chunkId, audioData, metadata, voice } = audioItem;
+
+                    log(`🎵 Converting base64 audio for chunk ${chunkId} (${audioData.length} chars)`);
+
+                    // Convert base64 to blob with proper error handling
+                    const binaryString = atob(audioData);
+                    const bytes = new Uint8Array(binaryString.length);
+                    for (let i = 0; i < binaryString.length; i++) {
+                        bytes[i] = binaryString.charCodeAt(i);
+                    }
+
+                    log(`🎵 Created audio buffer: ${bytes.length} bytes`);
+
+                    // Create audio blob with explicit WAV headers
+                    const audioBlob = new Blob([bytes], { type: 'audio/wav' });
+                    const audioUrl = URL.createObjectURL(audioBlob);
+
+                    // Create audio element with enhanced configuration
+                    const audio = new Audio();
+                    audio.preload = 'auto';
+                    audio.volume = 1.0;
+
+                    // Store reference for cleanup
+                    currentAudio = audio;
+
+                    // Set up event listeners BEFORE setting src
+                    audio.addEventListener('loadstart', () => {
+                        log(`🎵 Started loading audio chunk ${chunkId}`);
+                    });
+
+                    audio.addEventListener('canplaythrough', () => {
+                        log(`🎵 Audio chunk ${chunkId} ready to play (${metadata.audio_duration_ms || 'unknown'}ms)`);
+                    });
+
+                    audio.addEventListener('play', () => {
+                        log(`🎵 Started playing audio chunk ${chunkId} with voice '${voice}'`);
+                        updateStatus(`🔊 Playing AI response (${voice})...`, 'success');
+                    });
+
+                    audio.addEventListener('ended', () => {
+                        log(`✅ Finished playing audio chunk ${chunkId}`);
+                        URL.revokeObjectURL(audioUrl);
+                        currentAudio = null;
+                        resolve();
+                    });
+
+                    audio.addEventListener('error', (e) => {
+                        log(`❌ Audio playback error for chunk ${chunkId}: ${e.message || 'Unknown error'}`);
+                        URL.revokeObjectURL(audioUrl);
+                        currentAudio = null;
+                        reject(new Error(`Audio playback failed: ${e.message || 'Unknown error'}`));
+                    });
+
+                    audio.addEventListener('abort', () => {
+                        log(`⚠️ Audio playback aborted for chunk ${chunkId}`);
+                        URL.revokeObjectURL(audioUrl);
+                        currentAudio = null;
+                        resolve(); // Don't reject on abort, just continue
+                    });
+
+                    // Set source and start loading
+                    audio.src = audioUrl;
+
+                    // Start playback with retry logic
+                    const playWithRetry = async (retries = 3) => {
+                        try {
+                            await audio.play();
+                        } catch (playError) {
+                            log(`⚠️ Play attempt failed for chunk ${chunkId}: ${playError.message}`);
+
+                            if (retries > 0 && !playError.message.includes('aborted')) {
+                                log(`🔄 Retrying playback for chunk ${chunkId} (${retries} attempts left)`);
+                                setTimeout(() => playWithRetry(retries - 1), 200);
+                            } else {
+                                URL.revokeObjectURL(audioUrl);
+                                currentAudio = null;
+                                reject(new Error(`Failed to play audio after retries: ${playError.message}`));
+                            }
+                        }
+                    };
+
+                    // Wait for audio to be ready, then play
+                    if (audio.readyState >= 3) { // HAVE_FUTURE_DATA
+                        playWithRetry();
+                    } else {
+                        audio.addEventListener('canplay', () => playWithRetry(), { once: true });
+                    }
+
+                } catch (error) {
+                    log(`❌ Error creating audio for chunk ${audioItem.chunkId}: ${error}`);
+                    reject(error);
+                }
+            });
         }
 
         function displayConversationMessage(data) {
@@ -858,8 +971,19 @@ async def home(request: Request):
         
         function stopConversation() {
             isStreaming = false;
-            
+
             log('Stopping conversational streaming...');
+
+            // Stop and clear audio playback
+            if (currentAudio) {
+                currentAudio.pause();
+                currentAudio = null;
+            }
+
+            // Clear audio queue
+            audioQueue = [];
+            isPlayingAudio = false;
+            log('🎵 Audio queue cleared');
             
             if (audioWorkletNode) {
                 audioWorkletNode.disconnect();
