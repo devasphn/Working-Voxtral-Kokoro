@@ -87,7 +87,7 @@ async def test_package_imports():
         ('torch', 'PyTorch'),
         ('transformers', 'Transformers'),
         ('mistral_common', 'Mistral Common'),
-        ('orpheus_tts', 'Orpheus TTS (orpheus-speech)'),
+        ('orpheus_speech', 'Orpheus TTS (orpheus-speech)'),
         ('fastapi', 'FastAPI'),
         ('websockets', 'WebSockets'),
         ('numpy', 'NumPy'),
