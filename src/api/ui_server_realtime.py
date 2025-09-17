@@ -39,6 +39,7 @@ streaming_logger.setLevel(logging.DEBUG)
 # Global variables for lazy initialization
 _voxtral_model = None
 _audio_processor = None
+_speech_to_speech_pipeline = None
 
 # Response deduplication tracking
 recent_responses = {}  # client_id -> last_response_text
@@ -60,6 +61,15 @@ def get_audio_processor():
         _audio_processor = AudioProcessor()
         streaming_logger.info("Audio processor lazy-loaded")
     return _audio_processor
+
+def get_speech_to_speech_pipeline():
+    """Lazy initialization of Speech-to-Speech pipeline"""
+    global _speech_to_speech_pipeline
+    if _speech_to_speech_pipeline is None:
+        from src.models.speech_to_speech_pipeline import speech_to_speech_pipeline
+        _speech_to_speech_pipeline = speech_to_speech_pipeline
+        streaming_logger.info("Speech-to-Speech pipeline lazy-loaded")
+    return _speech_to_speech_pipeline
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -323,7 +333,7 @@ async def home(request: Request):
     
     <div class="container">
         <h1>🎙️ Voxtral Conversational AI</h1>
-        <p style="text-align: center; opacity: 0.8;">Intelligent conversation with Voice Activity Detection</p>
+        <p style="text-align: center; opacity: 0.8;">Intelligent conversation with Voice Activity Detection & Speech-to-Speech</p>
         
         <div class="vad-indicator">
             <strong>🎤 Voice Status:</strong>
@@ -340,13 +350,55 @@ async def home(request: Request):
             <button id="connectBtn" class="connect-btn" onclick="connect()">Connect</button>
             <button id="streamBtn" class="stream-btn" onclick="startConversation()" disabled>Start Conversation</button>
             <button id="stopBtn" class="stop-btn" onclick="stopConversation()" disabled>Stop Conversation</button>
+            <button id="speechToSpeechBtn" class="stream-btn" onclick="startSpeechToSpeech()" disabled>🗣️ Speech-to-Speech</button>
         </div>
-        
-        <!-- Simplified interface - Smart Conversation Mode only -->
-        <div class="audio-controls" style="justify-content: center;">
-            <div style="text-align: center; padding: 10px; background: rgba(255, 255, 255, 0.1); border-radius: 10px;">
-                <strong>🤖 Smart Conversation Mode</strong>
-                <p style="margin: 5px 0; opacity: 0.8; font-size: 0.9em;">AI assistant ready for natural conversation</p>
+
+        <!-- Mode Selection -->
+        <div class="audio-controls" style="justify-content: center; margin-bottom: 20px;">
+            <div style="text-align: center; padding: 15px; background: rgba(255, 255, 255, 0.1); border-radius: 10px;">
+                <strong>🤖 Conversation Mode</strong>
+                <div style="margin: 10px 0;">
+                    <label style="margin-right: 20px;">
+                        <input type="radio" name="mode" value="transcribe" checked onchange="updateMode()">
+                        📝 Text Only
+                    </label>
+                    <label>
+                        <input type="radio" name="mode" value="speech_to_speech" onchange="updateMode()">
+                        🗣️ Speech-to-Speech
+                    </label>
+                </div>
+                <p style="margin: 5px 0; opacity: 0.8; font-size: 0.9em;" id="modeDescription">AI assistant ready for text-based conversation</p>
+            </div>
+        </div>
+
+        <!-- Speech-to-Speech Controls -->
+        <div class="audio-controls" id="speechToSpeechControls" style="display: none; justify-content: center; margin-bottom: 20px;">
+            <div style="text-align: center; padding: 15px; background: rgba(255, 255, 255, 0.1); border-radius: 10px;">
+                <strong>🎤 Voice Settings</strong>
+                <div style="margin: 10px 0; display: flex; gap: 15px; justify-content: center; flex-wrap: wrap;">
+                    <div>
+                        <label>Voice:</label>
+                        <select id="voiceSelect" onchange="updateVoiceSettings()">
+                            <option value="auto">🎭 Auto (Emotional)</option>
+                            <option value="af_heart">Heart (Calm & Friendly)</option>
+                            <option value="af_bella">Bella (Energetic & Excited)</option>
+                            <option value="af_sarah">Sarah (Gentle & Empathetic)</option>
+                            <option value="af_nicole">Nicole (Professional)</option>
+                            <option value="af_sky">Sky (Bright & Happy)</option>
+                            <option value="am_adam">Adam (Male, Friendly)</option>
+                            <option value="am_michael">Michael (Male, Professional)</option>
+                            <option value="am_edward">Edward (Male, Calm)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Speed:</label>
+                        <select id="speedSelect" onchange="updateVoiceSettings()">
+                            <option value="0.8">Slow</option>
+                            <option value="1.0" selected>Normal</option>
+                            <option value="1.2">Fast</option>
+                        </select>
+                    </div>
+                </div>
             </div>
         </div>
         
@@ -388,6 +440,56 @@ async def home(request: Request):
                 </div>
             </div>
         </div>
+
+        <!-- Speech-to-Speech Conversation Display -->
+        <div class="conversation" id="speechToSpeechConversation" style="display: none;">
+            <div style="text-align: center; margin-bottom: 20px;">
+                <h3>🗣️ Speech-to-Speech Conversation</h3>
+                <p style="opacity: 0.8; font-size: 0.9em;">Speak naturally - I'll transcribe, respond, and speak back to you!</p>
+            </div>
+
+            <!-- Real-time Transcription Display -->
+            <div id="currentTranscription" style="background: rgba(0, 184, 148, 0.2); padding: 15px; border-radius: 10px; margin-bottom: 15px; display: none;">
+                <strong>🎤 You said:</strong>
+                <div id="transcriptionText" style="font-style: italic; margin-top: 5px;"></div>
+                <div class="timestamp" id="transcriptionTime"></div>
+            </div>
+
+            <!-- AI Response Text Display -->
+            <div id="currentResponse" style="background: rgba(116, 185, 255, 0.2); padding: 15px; border-radius: 10px; margin-bottom: 15px; display: none;">
+                <strong>🤖 AI Response:</strong>
+                <div id="responseText" style="margin-top: 5px;"></div>
+                <div class="timestamp" id="responseTime"></div>
+            </div>
+
+            <!-- Audio Playback Controls -->
+            <div id="audioPlayback" style="background: rgba(255, 255, 255, 0.1); padding: 15px; border-radius: 10px; margin-bottom: 15px; display: none;">
+                <strong>🔊 AI Speech:</strong>
+                <div style="margin-top: 10px;">
+                    <audio id="responseAudio" controls style="width: 100%; background: rgba(255, 255, 255, 0.1);">
+                        Your browser does not support the audio element.
+                    </audio>
+                </div>
+                <div style="margin-top: 10px; font-size: 0.9em; opacity: 0.8;">
+                    Voice: <span id="voiceUsed">-</span> | Speed: <span id="speedUsed">-</span> | Duration: <span id="audioDuration">-</span>
+                </div>
+            </div>
+
+            <!-- Processing Status -->
+            <div id="processingStatus" style="background: rgba(253, 203, 110, 0.2); padding: 15px; border-radius: 10px; margin-bottom: 15px; display: none;">
+                <strong>⚡ Processing:</strong>
+                <div id="processingMessage" style="margin-top: 5px;">Initializing...</div>
+                <div class="timestamp" id="processingTime"></div>
+            </div>
+
+            <!-- Conversation History -->
+            <div id="speechToSpeechHistory">
+                <div class="message ai-message">
+                    <div><strong>AI:</strong> Hello! I'm ready for speech-to-speech conversation. Speak naturally and I'll respond with voice!</div>
+                    <div class="timestamp">Speech-to-Speech mode ready</div>
+                </div>
+            </div>
+        </div>
         
         <div id="performanceWarning" class="performance-warning" style="display: none;">
             ⚠️ High latency detected. For better performance, try using "Simple Transcription" mode or check your internet connection.
@@ -417,7 +519,14 @@ async def home(request: Request):
         let silenceStartTime = null;
         let pendingResponse = false;
         let lastResponseText = '';  // For deduplication
-        
+
+        // Speech-to-Speech specific variables
+        let currentMode = 'transcribe';
+        let selectedVoice = 'af_heart';
+        let selectedSpeed = 1.0;
+        let currentConversationId = null;
+        let speechToSpeechActive = false;
+
         // Enhanced configuration for continuous speech capture
         const CHUNK_SIZE = 4096;
         const CHUNK_INTERVAL = 100;  // Reduced for more responsive VAD (was 1000ms)
@@ -532,7 +641,207 @@ async def home(request: Request):
             document.getElementById('processingRate').textContent = processingRate;
             document.getElementById('silenceSkipped').textContent = silenceChunks;
         }
-        
+
+        // Speech-to-Speech Functions
+        function updateMode() {
+            const mode = document.querySelector('input[name="mode"]:checked').value;
+            currentMode = mode;
+
+            const description = document.getElementById('modeDescription');
+            const speechControls = document.getElementById('speechToSpeechControls');
+            const speechBtn = document.getElementById('speechToSpeechBtn');
+
+            if (mode === 'speech_to_speech') {
+                description.textContent = 'AI assistant ready for speech-to-speech conversation with voice responses';
+                speechControls.style.display = 'flex';
+                speechBtn.style.display = 'inline-block';
+            } else {
+                description.textContent = 'AI assistant ready for text-based conversation';
+                speechControls.style.display = 'none';
+                speechBtn.style.display = 'none';
+            }
+
+            log(`Mode updated to: ${mode}`);
+        }
+
+        function updateVoiceSettings() {
+            selectedVoice = document.getElementById('voiceSelect').value;
+            selectedSpeed = parseFloat(document.getElementById('speedSelect').value);
+
+            // Update description based on voice selection
+            const voiceSelect = document.getElementById('voiceSelect');
+            const selectedOption = voiceSelect.options[voiceSelect.selectedIndex];
+
+            if (selectedVoice === 'auto') {
+                log('Voice settings: Automatic emotional voice selection enabled');
+            } else {
+                log(`Voice settings updated: ${selectedVoice} (${selectedOption.text}), speed: ${selectedSpeed}`);
+            }
+        }
+
+        function startSpeechToSpeech() {
+            if (currentMode === 'speech_to_speech') {
+                speechToSpeechActive = true;
+                currentConversationId = 'speech_' + Date.now();
+
+                // Show speech-to-speech conversation area
+                document.getElementById('conversation').style.display = 'none';
+                document.getElementById('speechToSpeechConversation').style.display = 'block';
+
+                // Update button states
+                document.getElementById('speechToSpeechBtn').disabled = true;
+                document.getElementById('streamBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+
+                startConversation();
+                log('Speech-to-Speech mode activated');
+            }
+        }
+
+        function showProcessingStatus(stage, message) {
+            const statusDiv = document.getElementById('processingStatus');
+            const messageDiv = document.getElementById('processingMessage');
+            const timeDiv = document.getElementById('processingTime');
+
+            messageDiv.textContent = `${stage}: ${message}`;
+            timeDiv.textContent = new Date().toLocaleTimeString();
+            statusDiv.style.display = 'block';
+        }
+
+        function hideProcessingStatus() {
+            document.getElementById('processingStatus').style.display = 'none';
+        }
+
+        function showTranscription(text, conversationId) {
+            const transcriptionDiv = document.getElementById('currentTranscription');
+            const textDiv = document.getElementById('transcriptionText');
+            const timeDiv = document.getElementById('transcriptionTime');
+
+            textDiv.textContent = text;
+            timeDiv.textContent = `Conversation ${conversationId} - ${new Date().toLocaleTimeString()}`;
+            transcriptionDiv.style.display = 'block';
+        }
+
+        function showResponseText(text, conversationId) {
+            const responseDiv = document.getElementById('currentResponse');
+            const textDiv = document.getElementById('responseText');
+            const timeDiv = document.getElementById('responseTime');
+
+            textDiv.textContent = text;
+            timeDiv.textContent = `Response generated - ${new Date().toLocaleTimeString()}`;
+            responseDiv.style.display = 'block';
+        }
+
+        function showAudioPlayback(audioData, sampleRate, voice, speed, duration) {
+            const playbackDiv = document.getElementById('audioPlayback');
+            const audioElement = document.getElementById('responseAudio');
+            const voiceSpan = document.getElementById('voiceUsed');
+            const speedSpan = document.getElementById('speedUsed');
+            const durationSpan = document.getElementById('audioDuration');
+
+            // Convert base64 audio to blob and create URL
+            const audioBytes = Uint8Array.from(atob(audioData), c => c.charCodeAt(0));
+            const audioBlob = new Blob([audioBytes], { type: 'audio/wav' });
+            const audioUrl = URL.createObjectURL(audioBlob);
+
+            audioElement.src = audioUrl;
+            voiceSpan.textContent = voice;
+            speedSpan.textContent = speed;
+            durationSpan.textContent = `${duration.toFixed(1)}s`;
+
+            playbackDiv.style.display = 'block';
+
+            // Auto-play the response
+            audioElement.play().catch(e => {
+                log('Auto-play failed (user interaction required): ' + e.message);
+            });
+        }
+
+        function addToSpeechHistory(userText, aiText, conversationId, emotionAnalysis = null) {
+            const historyDiv = document.getElementById('speechToSpeechHistory');
+
+            if (userText) {
+                const userMessage = document.createElement('div');
+                userMessage.className = 'message user-message';
+                let emotionInfo = '';
+                if (emotionAnalysis && emotionAnalysis.user_emotion) {
+                    emotionInfo = ` <span style="opacity: 0.7; font-size: 0.8em;">[${emotionAnalysis.user_emotion}]</span>`;
+                }
+                userMessage.innerHTML = `
+                    <div><strong>You:</strong> ${userText}${emotionInfo}</div>
+                    <div class="timestamp">${conversationId} - ${new Date().toLocaleTimeString()}</div>
+                `;
+                historyDiv.appendChild(userMessage);
+            }
+
+            if (aiText) {
+                const aiMessage = document.createElement('div');
+                aiMessage.className = 'message ai-message';
+                let emotionInfo = '';
+                if (emotionAnalysis && emotionAnalysis.response_emotion) {
+                    const score = emotionAnalysis.appropriateness_score || 0;
+                    const scoreColor = score >= 0.9 ? '#00b894' : score >= 0.7 ? '#fdcb6e' : '#e17055';
+                    emotionInfo = ` <span style="opacity: 0.7; font-size: 0.8em;">[${emotionAnalysis.response_emotion}, score: <span style="color: ${scoreColor}">${(score * 100).toFixed(0)}%</span>]</span>`;
+                }
+                aiMessage.innerHTML = `
+                    <div><strong>AI:</strong> ${aiText}${emotionInfo}</div>
+                    <div class="timestamp">Response - ${new Date().toLocaleTimeString()}</div>
+                `;
+                historyDiv.appendChild(aiMessage);
+            }
+
+            // Scroll to bottom
+            historyDiv.scrollTop = historyDiv.scrollHeight;
+        }
+
+        function showEmotionalAnalysis(analysis) {
+            // Create or update emotional analysis display
+            let analysisDiv = document.getElementById('emotionalAnalysis');
+            if (!analysisDiv) {
+                analysisDiv = document.createElement('div');
+                analysisDiv.id = 'emotionalAnalysis';
+                analysisDiv.style.cssText = `
+                    background: rgba(116, 185, 255, 0.1);
+                    padding: 10px;
+                    border-radius: 10px;
+                    margin-bottom: 15px;
+                    font-size: 0.9em;
+                    border-left: 4px solid #74b9ff;
+                `;
+
+                const speechConversation = document.getElementById('speechToSpeechConversation');
+                const historyDiv = document.getElementById('speechToSpeechHistory');
+                speechConversation.insertBefore(analysisDiv, historyDiv);
+            }
+
+            const scoreColor = analysis.appropriateness_score >= 0.9 ? '#00b894' :
+                              analysis.appropriateness_score >= 0.7 ? '#fdcb6e' : '#e17055';
+
+            analysisDiv.innerHTML = `
+                <strong>🎭 Emotional Analysis:</strong><br>
+                <div style="margin-top: 5px;">
+                    <span>User: <strong>${analysis.user_emotion}</strong></span> →
+                    <span>AI: <strong>${analysis.response_emotion}</strong></span>
+                    <span style="color: ${scoreColor}; margin-left: 10px;">
+                        (${(analysis.appropriateness_score * 100).toFixed(0)}% appropriate)
+                    </span>
+                </div>
+                <div style="margin-top: 5px; opacity: 0.8; font-style: italic;">
+                    ${analysis.emotional_reasoning}
+                </div>
+                <div style="margin-top: 5px; font-size: 0.8em; opacity: 0.7;">
+                    Voice: ${analysis.voice_selected} | Speed: ${analysis.speed_selected.toFixed(1)}x
+                </div>
+            `;
+
+            // Auto-hide after 10 seconds
+            setTimeout(() => {
+                if (analysisDiv && analysisDiv.parentNode) {
+                    analysisDiv.style.opacity = '0.5';
+                }
+            }, 10000);
+        }
+
         async function connect() {
             try {
                 updateStatus('Connecting to Voxtral conversational AI...', 'loading');
@@ -606,7 +915,77 @@ async def home(request: Request):
                 case 'info':
                     updateStatus(data.message, 'loading');
                     break;
-                    
+
+                // Speech-to-Speech message types
+                case 'processing':
+                    if (speechToSpeechActive) {
+                        showProcessingStatus(data.stage, data.message);
+                    }
+                    break;
+
+                case 'transcription':
+                    if (speechToSpeechActive) {
+                        showTranscription(data.text, data.conversation_id);
+                        log(`Transcription received: "${data.text}"`);
+                    }
+                    break;
+
+                case 'response_text':
+                    if (speechToSpeechActive) {
+                        showResponseText(data.text, data.conversation_id);
+                        log(`AI response text: "${data.text}"`);
+                    }
+                    break;
+
+                case 'speech_response':
+                    if (speechToSpeechActive) {
+                        hideProcessingStatus();
+                        showAudioPlayback(
+                            data.audio_data,
+                            data.sample_rate,
+                            data.voice_used,
+                            data.speed_used,
+                            data.audio_duration_s
+                        );
+                        log(`Speech response received: ${data.audio_duration_s}s audio`);
+                    }
+                    break;
+
+                case 'conversation_complete':
+                    if (speechToSpeechActive) {
+                        hideProcessingStatus();
+
+                        // Add to conversation history with emotional context
+                        const transcription = document.getElementById('transcriptionText').textContent;
+                        const responseText = document.getElementById('responseText').textContent;
+
+                        if (transcription || responseText) {
+                            addToSpeechHistory(transcription, responseText, data.conversation_id, data.emotion_analysis);
+                        }
+
+                        // Display emotional analysis if available
+                        if (data.emotion_analysis) {
+                            showEmotionalAnalysis(data.emotion_analysis);
+                        }
+
+                        // Update metrics
+                        if (data.total_latency_ms) {
+                            latencySum += data.total_latency_ms;
+                            responseCount++;
+                            updateMetrics();
+
+                            if (data.total_latency_ms > LATENCY_WARNING_THRESHOLD) {
+                                document.getElementById('performanceWarning').style.display = 'block';
+                            }
+                        }
+
+                        log(`Conversation complete: ${data.total_latency_ms}ms (target: ${data.meets_target ? 'met' : 'exceeded'})`);
+                        if (data.emotion_analysis) {
+                            log(`Emotional context: ${data.emotion_analysis.emotional_reasoning}`);
+                        }
+                    }
+                    break;
+
                 default:
                     log(`Unknown message type: ${data.type}`);
             }
@@ -819,9 +1198,28 @@ async def home(request: Request):
             
             document.getElementById('streamBtn').disabled = false;
             document.getElementById('stopBtn').disabled = true;
+            document.getElementById('speechToSpeechBtn').disabled = false;
             updateConnectionStatus(true, false);
             updateStatus('Conversation ended. Ready to start a new conversation.', 'info');
             updateVadStatus('waiting');
+
+            // Reset speech-to-speech mode
+            if (speechToSpeechActive) {
+                speechToSpeechActive = false;
+                currentConversationId = null;
+
+                // Hide speech-to-speech displays
+                hideProcessingStatus();
+                document.getElementById('currentTranscription').style.display = 'none';
+                document.getElementById('currentResponse').style.display = 'none';
+                document.getElementById('audioPlayback').style.display = 'none';
+
+                // Show regular conversation area
+                document.getElementById('speechToSpeechConversation').style.display = 'none';
+                document.getElementById('conversation').style.display = 'block';
+
+                log('Speech-to-Speech mode deactivated');
+            }
             
             document.getElementById('volumeBar').style.width = '0%';
             document.getElementById('volumeBar').classList.remove('speech');
@@ -869,11 +1267,18 @@ async def home(request: Request):
                 const message = {
                     type: 'audio_chunk',
                     audio_data: base64Audio,
-                    mode: 'conversation',  // Always use Smart Conversation Mode
+                    mode: speechToSpeechActive ? 'speech_to_speech' : 'conversation',
                     prompt: '',  // No custom prompts - using hardcoded optimal prompt
                     chunk_id: chunkCounter++,
                     timestamp: Date.now()
                 };
+
+                // Add speech-to-speech specific parameters
+                if (speechToSpeechActive) {
+                    message.conversation_id = currentConversationId;
+                    message.voice = selectedVoice === 'auto' ? null : selectedVoice;  // null for auto-selection
+                    message.speed = selectedSpeed;
+                }
                 
                 ws.send(JSON.stringify(message));
                 log(`Sent audio chunk ${chunkCounter} (${audioData.length} samples)`);
@@ -913,6 +1318,10 @@ async def home(request: Request):
                 ws.close();
             }
         });
+
+        // Initialize the interface
+        updateMode();
+        updateVoiceSettings();
     </script>
 </body>
 </html>
@@ -925,15 +1334,28 @@ async def api_status():
     try:
         voxtral_model = get_voxtral_model()
         model_info = voxtral_model.get_model_info()
+
+        # Get speech-to-speech pipeline info if enabled
+        speech_to_speech_info = None
+        if config.speech_to_speech.enabled:
+            try:
+                pipeline = get_speech_to_speech_pipeline()
+                speech_to_speech_info = pipeline.get_pipeline_info()
+            except Exception as e:
+                speech_to_speech_info = {"error": str(e), "enabled": False}
+
         return JSONResponse({
             "status": "healthy" if voxtral_model.is_initialized else "initializing",
             "timestamp": time.time(),
             "model": model_info,
+            "speech_to_speech": speech_to_speech_info,
             "config": {
                 "sample_rate": config.audio.sample_rate,
                 "tcp_ports": config.server.tcp_ports,
                 "latency_target": config.streaming.latency_target_ms,
-                "mode": "conversational_optimized_with_vad"
+                "speech_to_speech_enabled": config.speech_to_speech.enabled,
+                "speech_to_speech_latency_target": config.speech_to_speech.latency_target_ms,
+                "mode": "conversational_optimized_with_vad_and_speech_to_speech" if config.speech_to_speech.enabled else "conversational_optimized_with_vad"
             }
         })
     except Exception as e:

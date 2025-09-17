@@ -24,6 +24,9 @@ pillow>=10.1.0
 soundfile>=0.12.1
 torchaudio>=2.1.0
 pyaudio>=0.2.11
+# Kokoro TTS dependencies for speech-to-speech functionality
+kokoro>=0.9.4
+misaki[en]>=0.3.0
 # Server and networking
 eventlet>=0.33.3
 gunicorn>=21.2.0

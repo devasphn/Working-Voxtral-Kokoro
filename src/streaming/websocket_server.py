@@ -14,6 +14,7 @@ import traceback
 
 from src.models.voxtral_model import voxtral_model
 from src.models.audio_processor import AudioProcessor
+from src.models.speech_to_speech_pipeline import speech_to_speech_pipeline
 from src.utils.config import config
 from src.utils.logging_config import logger
 
@@ -92,9 +93,15 @@ class WebSocketServer:
             
             # Get processing mode
             mode = data.get("mode", "transcribe")
+
+            # Check if speech-to-speech mode is requested
+            if mode == "speech_to_speech" and config.speech_to_speech.enabled:
+                await self.handle_speech_to_speech(websocket, audio_array, data)
+                return
+
             prompt = data.get("prompt", "")
-            
-            # Process with Voxtral
+
+            # Process with Voxtral (legacy modes)
             if mode == "transcribe":
                 response = await voxtral_model.transcribe_audio(audio_tensor)
             elif mode == "understand":
@@ -124,7 +131,109 @@ class WebSocketServer:
                 "type": "error",
                 "message": f"Processing error: {str(e)}"
             })
-    
+
+    async def handle_speech_to_speech(self, websocket, audio_array: np.ndarray, data: Dict[str, Any]):
+        """Handle speech-to-speech conversation processing"""
+        try:
+            start_time = time.time()
+            conversation_id = data.get("conversation_id", f"ws_{int(time.time() * 1000)}")
+
+            # Voice preferences
+            voice_preference = data.get("voice", None)
+            speed_preference = data.get("speed", None)
+
+            logger.info(f"🗣️ Processing speech-to-speech conversation: {conversation_id}")
+
+            # Send processing status
+            await self.send_message(websocket, {
+                "type": "processing",
+                "conversation_id": conversation_id,
+                "stage": "speech_to_text",
+                "message": "Converting speech to text..."
+            })
+
+            # Process through speech-to-speech pipeline
+            result = await speech_to_speech_pipeline.process_conversation_turn(
+                audio_array,
+                conversation_id=conversation_id,
+                voice_preference=voice_preference,
+                speed_preference=speed_preference
+            )
+
+            if not result['success']:
+                await self.send_message(websocket, {
+                    "type": "error",
+                    "conversation_id": conversation_id,
+                    "message": f"Speech-to-speech processing failed: {result.get('error', 'Unknown error')}"
+                })
+                return
+
+            # Send transcription update
+            if result['transcription']:
+                await self.send_message(websocket, {
+                    "type": "transcription",
+                    "conversation_id": conversation_id,
+                    "text": result['transcription'],
+                    "stage_timing_ms": result['stage_timings'].get('stt_ms', 0)
+                })
+
+            # Send response text
+            if result['response_text']:
+                await self.send_message(websocket, {
+                    "type": "response_text",
+                    "conversation_id": conversation_id,
+                    "text": result['response_text'],
+                    "stage_timing_ms": result['stage_timings'].get('llm_ms', 0)
+                })
+
+            # Send audio response if available
+            if len(result['response_audio']) > 0:
+                # Convert audio to base64 for transmission
+                audio_bytes = result['response_audio'].astype(np.float32).tobytes()
+                audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+
+                await self.send_message(websocket, {
+                    "type": "speech_response",
+                    "conversation_id": conversation_id,
+                    "audio_data": audio_b64,
+                    "sample_rate": result['sample_rate'],
+                    "voice_used": result.get('voice_used', 'unknown'),
+                    "speed_used": result.get('speed_used', 1.0),
+                    "audio_duration_s": len(result['response_audio']) / result['sample_rate'],
+                    "stage_timing_ms": result['stage_timings'].get('tts_ms', 0)
+                })
+
+            # Send final summary
+            await self.send_message(websocket, {
+                "type": "conversation_complete",
+                "conversation_id": conversation_id,
+                "total_latency_ms": result['total_latency_ms'],
+                "meets_target": result['total_latency_ms'] <= config.speech_to_speech.latency_target_ms,
+                "stage_timings": result['stage_timings'],
+                "is_silence": result.get('is_silence', False)
+            })
+
+            logger.info(f"✅ Speech-to-speech conversation {conversation_id} completed in {result['total_latency_ms']:.1f}ms")
+
+            # Update health check status with latest performance
+            try:
+                from src.api.health_check import update_speech_to_speech_status
+                pipeline_info = speech_to_speech_pipeline.get_pipeline_info()
+                update_speech_to_speech_status({
+                    "initialized": speech_to_speech_pipeline.is_initialized,
+                    "info": pipeline_info
+                })
+            except Exception as e:
+                logger.debug(f"Could not update speech-to-speech health status: {e}")
+
+        except Exception as e:
+            logger.error(f"❌ Error in speech-to-speech processing: {e}")
+            await self.send_message(websocket, {
+                "type": "error",
+                "conversation_id": data.get("conversation_id", "unknown"),
+                "message": f"Speech-to-speech error: {str(e)}"
+            })
+
     async def handle_message(self, websocket, message: str):
         """Handle incoming WebSocket message"""
         try:
@@ -189,6 +298,24 @@ class WebSocketServer:
         # Initialize Voxtral model
         if not voxtral_model.is_initialized:
             await voxtral_model.initialize()
+
+        # Initialize Speech-to-Speech pipeline if enabled
+        if config.speech_to_speech.enabled and not speech_to_speech_pipeline.is_initialized:
+            logger.info("🔄 Initializing Speech-to-Speech pipeline...")
+            await speech_to_speech_pipeline.initialize()
+            logger.info("✅ Speech-to-Speech pipeline ready for conversational AI")
+
+            # Update health check status
+            try:
+                from src.api.health_check import update_speech_to_speech_status
+                pipeline_info = speech_to_speech_pipeline.get_pipeline_info()
+                update_speech_to_speech_status({
+                    "initialized": speech_to_speech_pipeline.is_initialized,
+                    "info": pipeline_info
+                })
+                logger.info("📊 Speech-to-Speech status updated in health check system")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not update speech-to-speech health status: {e}")
         
         # Start WebSocket server with updated API
         async with websockets.asyncio.server.serve(

@@ -46,6 +46,24 @@ class LoggingConfig(BaseModel):
     format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     file: str = "/workspace/logs/voxtral_streaming.log"
 
+class TTSConfig(BaseModel):
+    model_name: str = "hexgrad/Kokoro-82M"
+    cache_dir: str = "./model_cache/kokoro"
+    device: str = "cuda"
+    sample_rate: int = 24000
+    voice: str = "af_heart"
+    speed: float = 1.0
+    lang_code: str = "a"
+    emotional_expression: bool = True
+
+class SpeechToSpeechConfig(BaseModel):
+    enabled: bool = True
+    latency_target_ms: int = 500
+    buffer_size: int = 8192
+    output_format: str = "wav"
+    quality: str = "high"
+    emotional_expression: bool = True
+
 class Config(BaseSettings):
     """Main configuration class using BaseSettings for environment variable support"""
     server: ServerConfig = ServerConfig()
@@ -54,6 +72,8 @@ class Config(BaseSettings):
     spectrogram: SpectrogramConfig = SpectrogramConfig()
     streaming: StreamingConfig = StreamingConfig()
     logging: LoggingConfig = LoggingConfig()
+    tts: TTSConfig = TTSConfig()
+    speech_to_speech: SpeechToSpeechConfig = SpeechToSpeechConfig()
     
     # Pydantic v2 settings configuration
     model_config = SettingsConfigDict(

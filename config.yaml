@@ -33,6 +33,26 @@ streaming:
   buffer_size: 4096
   timeout_seconds: 300
   latency_target_ms: 200
+
+# Kokoro TTS configuration for speech-to-speech
+tts:
+  model_name: "hexgrad/Kokoro-82M"
+  cache_dir: "./model_cache/kokoro"
+  device: "cuda"
+  sample_rate: 24000
+  voice: "af_heart"
+  speed: 1.0
+  lang_code: "a"  # American English
+  emotional_expression: true
+
+# Speech-to-Speech pipeline configuration
+speech_to_speech:
+  enabled: true
+  latency_target_ms: 500
+  buffer_size: 8192
+  output_format: "wav"
+  quality: "high"
+  emotional_expression: true
   
 logging:
   level: "INFO"
