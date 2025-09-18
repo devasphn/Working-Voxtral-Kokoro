@@ -164,17 +164,7 @@ def get_voxtral_classes():
         compat_logger.warning("Voxtral not available - using fallback")
         return FallbackVoxtralModel, None
 
-def get_orpheus_classes():
-    """Get Orpheus classes with fallback"""
-    if check_orpheus_tts():
-        try:
-            from orpheus_tts import OrpheusModel
-            return OrpheusModel
-        except ImportError:
-            pass
-    
-    compat_logger.warning("Orpheus TTS not available - using fallback")
-    return FallbackOrpheusModel
+# Orpheus TTS support removed - using Kokoro TTS only
 
 def get_config():
     """Get configuration with fallback"""
@@ -197,9 +187,8 @@ def initialize_compatibility():
     packages_to_check = [
         ("transformers", "transformers"),
         ("mistral-common", "mistral_common"),
-        ("orpheus-speech", "orpheus_tts"),
+        ("kokoro", "kokoro"),
         ("pydantic-settings", "pydantic_settings"),
-        ("vllm", "vllm"),
         ("torch", "torch"),
         ("fastapi", "fastapi"),
         ("websockets", "websockets"),

@@ -87,7 +87,7 @@ async def test_package_imports():
         ('torch', 'PyTorch'),
         ('transformers', 'Transformers'),
         ('mistral_common', 'Mistral Common'),
-        ('orpheus_tts', 'Orpheus TTS (orpheus-speech)'),
+        ('kokoro', 'Kokoro TTS'),
         ('fastapi', 'FastAPI'),
         ('websockets', 'WebSockets'),
         ('numpy', 'NumPy'),
@@ -120,15 +120,12 @@ async def test_model_imports():
         from src.models.voxtral_model_realtime import VoxtralModel
         print_success("VoxtralModel imported")
         
-        # Test Orpheus models import
-        from src.tts.orpheus_streaming_model import OrpheusStreamingModel
-        print_success("OrpheusStreamingModel imported")
-        
-        from src.tts.orpheus_perfect_model import OrpheusPerfectModel
-        print_success("OrpheusPerfectModel imported")
-        
-        from src.tts.tts_service_perfect import TTSServicePerfect
-        print_success("TTSServicePerfect imported")
+        # Test Kokoro TTS model import
+        from src.models.kokoro_model_realtime import KokoroTTSModel
+        print_success("KokoroTTSModel imported")
+
+        from src.tts.tts_service import TTSService
+        print_success("TTSService imported")
         
         # Test unified manager import
         from src.models.unified_model_manager import UnifiedModelManager
@@ -148,50 +145,51 @@ async def test_model_imports():
         traceback.print_exc()
         return False
 
-async def test_orpheus_integration():
-    """Test Orpheus TTS integration"""
-    print_step(4, "Orpheus TTS Integration Test")
-    
+async def test_kokoro_integration():
+    """Test Kokoro TTS integration"""
+    print_step(4, "Kokoro TTS Integration Test")
+
     try:
-        from src.tts.orpheus_perfect_model import OrpheusPerfectModel
-        
+        from src.models.kokoro_model_realtime import KokoroTTSModel
+
         # Initialize model
-        print_info("Initializing Orpheus Perfect Model...")
-        orpheus_model = OrpheusPerfectModel()
-        
-        success = await orpheus_model.initialize()
+        print_info("Initializing Kokoro TTS Model...")
+        kokoro_model = KokoroTTSModel()
+
+        success = await kokoro_model.initialize()
         if not success:
-            print_error("Orpheus model initialization failed")
+            print_error("Kokoro TTS model initialization failed")
             return False
         
-        print_success("Orpheus model initialized successfully")
-        
+        print_success("Kokoro TTS model initialized successfully")
+
         # Test speech generation
         print_info("Testing speech generation...")
-        test_text = "Hello, this is a test of the Orpheus TTS integration."
-        
+        test_text = "Hello, this is a test of the Kokoro TTS integration."
+
         start_time = time.time()
-        audio_data = await orpheus_model.generate_speech(test_text, "tara")
+        result = await kokoro_model.synthesize_speech(test_text, "af_heart")
         generation_time = time.time() - start_time
-        
-        if audio_data and len(audio_data) > 0:
-            print_success(f"Generated {len(audio_data)} bytes of audio in {generation_time:.2f}s")
+
+        if result.get("success", False) and result.get("audio_data") is not None:
+            audio_data = result["audio_data"]
+            print_success(f"Generated audio in {generation_time:.2f}s")
         else:
-            print_error("No audio data generated")
+            print_error(f"No audio data generated: {result.get('error', 'Unknown error')}")
             return False
         
         # Test model info
-        model_info = orpheus_model.get_model_info()
-        print_success(f"Model info retrieved: {model_info['wrapper_type']}")
-        
+        model_info = kokoro_model.get_model_info()
+        print_success(f"Model info retrieved: {model_info.get('model_name', 'Kokoro TTS')}")
+
         # Cleanup
-        await orpheus_model.cleanup()
-        print_success("Orpheus model cleanup completed")
-        
+        await kokoro_model.cleanup()
+        print_success("Kokoro TTS model cleanup completed")
+
         return True
-        
+
     except Exception as e:
-        print_error(f"Orpheus integration test failed: {e}")
+        print_error(f"Kokoro TTS integration test failed: {e}")
         traceback.print_exc()
         return False
 
@@ -350,7 +348,7 @@ async def run_complete_validation():
         ("Environment", test_environment),
         ("Package Imports", test_package_imports),
         ("Model Imports", test_model_imports),
-        ("Orpheus Integration", test_orpheus_integration),
+        ("Kokoro TTS Integration", test_kokoro_integration),
         ("Voxtral Integration", test_voxtral_integration),
         ("Unified Manager", test_unified_manager),
         ("Audio Processing", test_audio_processing),

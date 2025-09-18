@@ -34,34 +34,20 @@ streaming:
   timeout_seconds: 300
   latency_target_ms: 200
 
-# TTS (Text-to-Speech) configuration - Orpheus TTS
+# TTS (Text-to-Speech) configuration - Kokoro TTS
 tts:
-  engine: "orpheus-direct"
-  default_voice: "ऋतिका"  # Hindi voice as requested
+  engine: "kokoro"
+  default_voice: "hm_omega"  # Kokoro Hindi voice (replaces ऋतिका)
   sample_rate: 24000
   enabled: true
-  # Kokoro TTS fallback settings
-  voice: "af_heart"  # Kokoro voice (af_heart=Grade A American English female)
+  # Kokoro TTS settings
+  voice: "hm_omega"  # Kokoro Hindi voice
   speed: 1.0  # Kokoro speech speed
-  lang_code: "a"  # Kokoro language code (a=American English, b=British English)
-  # Orpheus Direct Integration
-  orpheus_direct:
-    model_name: "canopylabs/orpheus-tts-0.1-finetune-prod"
-    max_model_len: 2048
-    sample_rate: 24000
-    gpu_memory_utilization: 0.8  # Use 80% of GPU memory
-    max_seq_len: 2048  # Override default max sequence length
-    kv_cache_dtype: "auto"  # KV cache data type
-  # Available voices by language
+  lang_code: "h"  # Kokoro language code (h=Hindi, a=American English, b=British English)
+  # Available voices by language - Kokoro voices only
   voices:
-    english: ["tara", "leah", "jess", "leo", "dan", "mia", "zac", "zoe"]
-    french: ["pierre", "amelie", "marie"]
-    german: ["jana", "thomas", "max"]
-    korean: ["유나", "준서"]
-    hindi: ["ऋतिका"]
-    mandarin: ["长乐", "白芷"]
-    spanish: ["javi", "sergio", "maria"]
-    italian: ["pietro", "giulia", "carlo"]
+    english: ["af_heart", "af_bella", "af_nicole", "af_sarah"]  # Kokoro English voices
+    hindi: ["hm_omega", "hf_alpha", "hf_beta", "hm_psi"]  # Kokoro Hindi voices
   # Performance settings
   performance:
     batch_size: 1  # Direct integration uses batch_size=1

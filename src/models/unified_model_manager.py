@@ -1,6 +1,6 @@
 """
-Unified Model Manager for Orpheus TTS Integration
-Centralized management of both Voxtral and Orpheus models with shared GPU memory
+Unified Model Manager for Kokoro TTS Integration
+Centralized management of both Voxtral and Kokoro TTS models with shared GPU memory
 """
 
 import asyncio
@@ -13,7 +13,7 @@ import gc
 
 # Import model classes
 from src.models.voxtral_model_realtime import VoxtralModel
-from src.tts.orpheus_perfect_model import OrpheusPerfectModel
+from src.models.kokoro_model_realtime import KokoroTTSModel
 from src.utils.gpu_memory_manager import GPUMemoryManager, InsufficientVRAMError
 
 # Setup logging
@@ -26,26 +26,26 @@ class ModelInitializationError(Exception):
 
 class UnifiedModelManager:
     """
-    Centralized management of both Voxtral and Orpheus models
+    Centralized management of both Voxtral and Kokoro TTS models
     Handles initialization order, memory sharing, and lifecycle management
     """
-    
+
     def __init__(self):
         self.voxtral_model = None
-        self.orpheus_model = None
+        self.kokoro_model = None
         self.gpu_memory_manager = None
         self.initialization_lock = Lock()
         self.is_initialized = False
-        
+
         # Initialization state tracking
         self.voxtral_initialized = False
-        self.orpheus_initialized = False
+        self.kokoro_initialized = False
         self.memory_manager_initialized = False
-        
+
         # Performance tracking
         self.initialization_times = {}
         self.memory_usage = {}
-        
+
         unified_logger.info("UnifiedModelManager created")
     
     async def initialize(self) -> bool:
@@ -67,7 +67,7 @@ class UnifiedModelManager:
                 
                 # Step 2: Initialize models in optimal order (Voxtral first for memory layout)
                 await self._initialize_voxtral_model()
-                await self._initialize_tts_model()
+                await self._initialize_kokoro_model()
 
                 # Step 3: Verify initialization and optimize memory
                 await self._post_initialization_optimization()
@@ -143,45 +143,38 @@ class UnifiedModelManager:
             unified_logger.error(f"❌ Voxtral initialization failed: {e}")
             raise ModelInitializationError(f"Voxtral initialization failed: {e}")
     
-    async def _initialize_tts_model(self):
-        """Initialize TTS model with Kokoro-primary, Orpheus-fallback hierarchy"""
+    async def _initialize_kokoro_model(self):
+        """Initialize Kokoro TTS model"""
         try:
-            unified_logger.info("🎵 Initializing TTS model with Kokoro-primary hierarchy...")
+            unified_logger.info("🎵 Initializing Kokoro TTS model...")
             start_time = time.time()
 
-            # Create Orpheus Perfect Model (which handles Kokoro/Orpheus hierarchy internally)
-            self.orpheus_model = OrpheusPerfectModel()
+            # Create Kokoro TTS Model
+            self.kokoro_model = KokoroTTSModel()
 
-            # Initialize with shared memory pool
-            device = self.gpu_memory_manager.device
-            shared_pool = self.gpu_memory_manager.memory_pool
-
-            success = await self.orpheus_model.initialize(device=device, shared_memory_pool=shared_pool)
+            # Initialize the model
+            success = await self.kokoro_model.initialize()
 
             if not success:
-                unified_logger.error("❌ TTS model initialization failed")
-                raise ModelInitializationError("TTS model initialization failed")
+                unified_logger.error("❌ Kokoro TTS model initialization failed")
+                raise ModelInitializationError("Kokoro TTS model initialization failed")
 
             # Track memory usage
             if self.gpu_memory_manager.device == "cuda":
                 total_memory = torch.cuda.memory_allocated() / (1024**3)
                 tts_memory = total_memory - self.memory_usage.get("voxtral_gb", 0)
-                self.gpu_memory_manager.track_model_memory("orpheus", tts_memory)
-                self.memory_usage["orpheus_gb"] = tts_memory
+                self.gpu_memory_manager.track_model_memory("kokoro", tts_memory)
+                self.memory_usage["kokoro_gb"] = tts_memory
 
-            # Check which TTS engine was actually initialized
-            model_info = self.orpheus_model.get_model_info()
-            tts_engine = model_info.get("tts_engine", "unknown")
-
-            self.orpheus_initialized = True
+            self.kokoro_initialized = True
             init_time = time.time() - start_time
-            self.initialization_times["orpheus"] = init_time
+            self.initialization_times["kokoro"] = init_time
 
-            unified_logger.info(f"✅ TTS model initialized with {tts_engine} engine in {init_time:.2f}s")
+            unified_logger.info(f"✅ Kokoro TTS model initialized in {init_time:.2f}s")
 
         except Exception as e:
-            unified_logger.error(f"❌ TTS model initialization failed: {e}")
-            raise ModelInitializationError(f"TTS model initialization failed: {e}")
+            unified_logger.error(f"❌ Kokoro TTS model initialization failed: {e}")
+            raise ModelInitializationError(f"Kokoro TTS model initialization failed: {e}")
     
     async def _post_initialization_optimization(self):
         """Perform post-initialization memory optimization"""
@@ -220,14 +213,13 @@ class UnifiedModelManager:
                     raise ModelInitializationError("Voxtral model verification failed")
                 unified_logger.info("✅ Voxtral model verification passed")
             
-            # Test TTS model (Kokoro/Orpheus)
-            if self.orpheus_model and self.orpheus_model.is_initialized:
-                model_info = self.orpheus_model.get_model_info()
+            # Test Kokoro TTS model
+            if self.kokoro_model and self.kokoro_model.is_initialized:
+                model_info = self.kokoro_model.get_model_info()
                 if not model_info.get("is_initialized"):
-                    raise ModelInitializationError("TTS model verification failed")
+                    raise ModelInitializationError("Kokoro TTS model verification failed")
 
-                tts_engine = model_info.get("tts_engine", "unknown")
-                unified_logger.info(f"✅ TTS model verification passed (using {tts_engine} engine)")
+                unified_logger.info("✅ Kokoro TTS model verification passed")
             
             unified_logger.info("✅ All model functionality verified")
             
@@ -246,12 +238,12 @@ class UnifiedModelManager:
                 unified_logger.info(f"   Used VRAM: {stats.used_vram_gb:.2f} GB")
                 unified_logger.info(f"   Available VRAM: {stats.available_vram_gb:.2f} GB")
                 unified_logger.info(f"   Voxtral Memory: {stats.voxtral_memory_gb:.2f} GB")
-                unified_logger.info(f"   Orpheus Memory: {stats.orpheus_memory_gb:.2f} GB")
+                unified_logger.info(f"   Kokoro Memory: {stats.kokoro_memory_gb:.2f} GB")
                 unified_logger.info(f"   System RAM: {stats.system_ram_gb:.2f} GB")
                 unified_logger.info(f"   System RAM Used: {stats.system_ram_used_gb:.2f} GB")
                 
                 # Calculate efficiency metrics
-                total_model_memory = stats.voxtral_memory_gb + stats.orpheus_memory_gb
+                total_model_memory = stats.voxtral_memory_gb + stats.kokoro_memory_gb
                 memory_efficiency = (total_model_memory / stats.used_vram_gb * 100) if stats.used_vram_gb > 0 else 0
                 
                 unified_logger.info(f"   Memory Efficiency: {memory_efficiency:.1f}%")
@@ -264,10 +256,10 @@ class UnifiedModelManager:
         try:
             unified_logger.info("🧹 Cleaning up partial initialization...")
             
-            if self.orpheus_model:
-                await self.orpheus_model.cleanup()
-                self.orpheus_model = None
-                self.orpheus_initialized = False
+            if self.kokoro_model:
+                await self.kokoro_model.cleanup()
+                self.kokoro_model = None
+                self.kokoro_initialized = False
             
             if self.voxtral_model:
                 # Voxtral model doesn't have async cleanup, but we can clear references
@@ -289,11 +281,11 @@ class UnifiedModelManager:
             raise ModelInitializationError("Voxtral model not initialized")
         return self.voxtral_model
     
-    async def get_orpheus_model(self) -> Optional[OrpheusPerfectModel]:
-        """Get initialized Orpheus model"""
-        if not self.is_initialized or not self.orpheus_initialized:
-            raise ModelInitializationError("Orpheus model not initialized")
-        return self.orpheus_model
+    async def get_kokoro_model(self) -> Optional[KokoroTTSModel]:
+        """Get initialized Kokoro TTS model"""
+        if not self.is_initialized or not self.kokoro_initialized:
+            raise ModelInitializationError("Kokoro TTS model not initialized")
+        return self.kokoro_model
     
     async def cleanup_gpu_memory(self) -> None:
         """Cleanup GPU memory and run garbage collection"""
@@ -328,19 +320,19 @@ class UnifiedModelManager:
                     "used_vram_gb": base_stats.used_vram_gb,
                     "available_vram_gb": base_stats.available_vram_gb,
                     "voxtral_memory_gb": base_stats.voxtral_memory_gb,
-                    "orpheus_memory_gb": base_stats.orpheus_memory_gb,
+                    "kokoro_memory_gb": base_stats.kokoro_memory_gb,
                     "system_ram_gb": base_stats.system_ram_gb,
                     "system_ram_used_gb": base_stats.system_ram_used_gb
                 },
                 "initialization_stats": {
                     "is_initialized": self.is_initialized,
                     "voxtral_initialized": self.voxtral_initialized,
-                    "orpheus_initialized": self.orpheus_initialized,
+                    "kokoro_initialized": self.kokoro_initialized,
                     "initialization_times": self.initialization_times
                 },
                 "model_info": {
                     "voxtral_available": self.voxtral_model is not None,
-                    "orpheus_available": self.orpheus_model is not None,
+                    "kokoro_available": self.kokoro_model is not None,
                     "device": self.gpu_memory_manager.device if self.gpu_memory_manager else "unknown"
                 }
             }
@@ -356,7 +348,7 @@ class UnifiedModelManager:
                 "unified_manager": {
                     "is_initialized": self.is_initialized,
                     "voxtral_initialized": self.voxtral_initialized,
-                    "orpheus_initialized": self.orpheus_initialized,
+                    "kokoro_initialized": self.kokoro_initialized,
                     "memory_manager_initialized": self.memory_manager_initialized
                 },
                 "initialization_times": self.initialization_times,
@@ -367,9 +359,9 @@ class UnifiedModelManager:
             if self.voxtral_model:
                 info["voxtral"] = self.voxtral_model.get_model_info()
             
-            # Add Orpheus model info
-            if self.orpheus_model:
-                info["orpheus"] = self.orpheus_model.get_model_info()
+            # Add Kokoro model info
+            if self.kokoro_model:
+                info["kokoro"] = self.kokoro_model.get_model_info()
             
             # Add memory manager info
             if self.gpu_memory_manager:
@@ -386,11 +378,11 @@ class UnifiedModelManager:
         try:
             unified_logger.info("🛑 Shutting down Unified Model Manager...")
             
-            # Cleanup Orpheus model
-            if self.orpheus_model:
-                await self.orpheus_model.cleanup()
-                self.orpheus_model = None
-                self.orpheus_initialized = False
+            # Cleanup Kokoro model
+            if self.kokoro_model:
+                await self.kokoro_model.cleanup()
+                self.kokoro_model = None
+                self.kokoro_initialized = False
             
             # Cleanup Voxtral model (no async cleanup available)
             if self.voxtral_model:

@@ -60,7 +60,7 @@ class PerformanceConfig(BaseModel):
     enable_monitoring: bool = True
     latency_targets: Dict[str, int] = {
         "voxtral_processing_ms": 100,
-        "orpheus_generation_ms": 150,
+        "kokoro_generation_ms": 150,
         "audio_conversion_ms": 50,
         "total_end_to_end_ms": 300
     }
@@ -77,31 +77,10 @@ class LoggingConfig(BaseModel):
     file: str = "/workspace/logs/voxtral_streaming.log"
 
 class TTSVoicesConfig(BaseModel):
-    english: List[str] = ["tara", "leah", "jess", "leo", "dan", "mia", "zac", "zoe"]
-    french: List[str] = ["pierre", "amelie", "marie"]
-    german: List[str] = ["jana", "thomas", "max"]
-    korean: List[str] = ["유나", "준서"]
-    hindi: List[str] = ["ऋतिका"]
-    mandarin: List[str] = ["长乐", "白芷"]
-    spanish: List[str] = ["javi", "sergio", "maria"]
-    italian: List[str] = ["pietro", "giulia", "carlo"]
+    english: List[str] = ["af_heart", "af_bella", "af_nicole", "af_sarah"]  # Kokoro English voices
+    hindi: List[str] = ["hm_omega", "hf_alpha", "hf_beta", "hm_psi"]  # Kokoro Hindi voices
 
-class TTSOrpheusDirectConfig(BaseModel):
-    """Configuration for direct Orpheus model integration"""
-    model_name: str = "canopylabs/orpheus-tts-0.1-finetune-prod"  # CORRECT Orpheus model
-    max_model_len: int = 2048  # As per official example
-    sample_rate: int = 24000   # As per official example
-    gpu_memory_utilization: float = 0.8  # Use 80% of GPU memory
-    max_seq_len: int = 2048  # Override default max sequence length
-    kv_cache_dtype: str = "auto"  # KV cache data type
-
-class TTSOrpheusServerConfig(BaseModel):
-    """Legacy configuration for Orpheus-FastAPI server (deprecated)"""
-    host: str = "localhost"
-    port: int = 1234
-    timeout: int = 30
-    model_path: str = "/workspace/models/Orpheus-3b-FT-Q8_0.gguf"
-    enabled: bool = False  # Disabled by default in favor of direct integration
+# Orpheus configuration classes removed - using Kokoro TTS only
 
 class TTSPerformanceConfig(BaseModel):
     """TTS performance and optimization settings"""
@@ -120,16 +99,14 @@ class GPUMemoryConfig(BaseModel):
     enable_monitoring: bool = True
 
 class TTSConfig(BaseModel):
-    engine: str = "orpheus-direct"  # Changed to direct integration
-    default_voice: str = "ऋतिका"  # Updated to match user request
+    engine: str = "kokoro"  # Changed to Kokoro TTS only
+    default_voice: str = "hm_omega"  # Kokoro Hindi voice (replaces ऋतिका)
     sample_rate: int = 24000
     enabled: bool = True
-    # Kokoro TTS fallback settings
-    voice: str = "af_heart"  # Kokoro voice (af_heart=Grade A American English female)
+    # Kokoro TTS settings
+    voice: str = "hm_omega"  # Kokoro Hindi voice
     speed: float = 1.0  # Kokoro speech speed
-    lang_code: str = "a"  # Kokoro language code (a=American English, b=British English)
-    orpheus_direct: TTSOrpheusDirectConfig = TTSOrpheusDirectConfig()
-    orpheus_server: TTSOrpheusServerConfig = TTSOrpheusServerConfig()  # Legacy support
+    lang_code: str = "h"  # Kokoro language code (h=Hindi, a=American English, b=British English)
     voices: TTSVoicesConfig = TTSVoicesConfig()
     performance: TTSPerformanceConfig = TTSPerformanceConfig()
     gpu_memory: GPUMemoryConfig = GPUMemoryConfig()

@@ -1,4 +1,4 @@
-# PRODUCTION-READY Voxtral + Orpheus TTS Requirements
+# PRODUCTION-READY Voxtral + Kokoro TTS Requirements
 # Resolved conflicts and validated dependencies for RunPod deployment
 
 # Core PyTorch Stack (CUDA 12.1 compatible)
@@ -15,9 +15,8 @@ tokenizers>=0.15.0
 # Mistral Common with Audio Support (OFFICIAL)
 mistral-common[audio]>=1.8.1
 
-# Orpheus TTS (CORRECT PACKAGE NAME from official repo)
-orpheus-speech>=0.1.0
-vllm>=0.6.0,<0.8.0
+# Kokoro TTS (lightweight alternative to Orpheus)
+kokoro==0.7.4
 
 # Audio Processing
 librosa>=0.10.1

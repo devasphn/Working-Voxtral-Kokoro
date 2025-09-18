@@ -1,6 +1,6 @@
 """
 TTS Service - High-level interface for text-to-speech functionality
-Integrates with Voxtral system for seamless audio generation
+Integrates with Voxtral system for seamless audio generation using Kokoro TTS
 """
 
 import asyncio
@@ -11,28 +11,37 @@ from typing import Dict, Any, Optional, List, AsyncGenerator
 from io import BytesIO
 import wave
 
-from .tts_service_perfect import tts_service_perfect
+from src.models.kokoro_model_realtime import KokoroTTSModel
 from src.utils.config import config
 
 # Setup logging
 tts_service_logger = logging.getLogger("tts_service")
 tts_service_logger.setLevel(logging.INFO)
 
+def map_voice_to_kokoro(voice_name: str) -> str:
+    """Map voice requests to appropriate Kokoro voices"""
+    if voice_name in ["ऋतिका", "ritika"]:
+        return "hm_omega"  # Hindi male voice
+    elif voice_name in ["hindi", "हिंदी"]:
+        return "hm_omega"  # Default Hindi voice
+    # Default to English female voice for unknown voices
+    return "af_heart"
+
 class TTSService:
     """
     High-level TTS service for Voxtral integration
-    Handles text-to-speech conversion with voice selection and audio streaming
+    Handles text-to-speech conversion with voice selection and audio streaming using Kokoro TTS
     """
-    
+
     def __init__(self):
-        self.engine = tts_service_perfect
+        self.kokoro_model = KokoroTTSModel()
         self.is_initialized = False
-        
+
         # Configuration from config file
-        self.default_voice = "ऋतिका"  # Override to use ऋतिका voice as requested
+        self.default_voice = "hm_omega"  # Use Kokoro Hindi voice instead of ऋतिका
         self.sample_rate = config.tts.sample_rate
         self.enabled = config.tts.enabled
-        
+
         # Performance tracking
         self.generation_stats = {
             "total_requests": 0,
@@ -40,14 +49,15 @@ class TTSService:
             "total_processing_time": 0.0,
             "average_realtime_factor": 0.0
         }
-        
-        tts_service_logger.info("TTSService initialized")
+
+        tts_service_logger.info("TTSService initialized with Kokoro TTS")
     
     async def initialize(self):
-        """Initialize the TTS service and engine"""
+        """Initialize the TTS service and Kokoro engine"""
         try:
-            tts_service_logger.info("🚀 Initializing TTS Service...")
-            await self.engine.initialize()
+            tts_service_logger.info("🚀 Initializing TTS Service with Kokoro TTS...")
+            if not success:
+                raise Exception("Kokoro TTS model initialization failed")
             self.is_initialized = True
             tts_service_logger.info("✅ TTS Service initialized successfully")
         except Exception as e:
@@ -71,8 +81,10 @@ class TTSService:
         """
         start_time = time.time()
         voice = voice or self.default_voice
-        
-        tts_service_logger.info(f"🎵 Generating speech: '{text[:50]}...' with voice '{voice}'")
+        # Map voice to Kokoro voice format
+        kokoro_voice = map_voice_to_kokoro(voice)
+
+        tts_service_logger.info(f"🎵 Generating speech: '{text[:50]}...' with voice '{voice}' (mapped to Kokoro: '{kokoro_voice}')")
         
         # Try to initialize if not already done
         if not self.is_initialized:
@@ -89,32 +101,32 @@ class TTSService:
                 }
         
         try:
-            # For now, we'll implement a basic version that would integrate with
-            # an external LLM inference server (like the original Orpheus-FastAPI design)
-            # This is a placeholder that would be connected to the actual token generation
-            
-            # Generate audio segments (this would be replaced with actual token processing)
-            audio_segments = await self._generate_audio_segments(text, voice)
-            
-            if not audio_segments:
+            # Generate speech using Kokoro TTS
+            result = await self.kokoro_model.synthesize_speech(text, kokoro_voice)
+
+            if not result.get("success", False):
                 return {
                     "success": False,
-                    "error": "No audio generated",
+                    "error": result.get("error", "Speech generation failed"),
                     "audio_data": None,
                     "metadata": {}
                 }
-            
-            # Combine audio segments
-            combined_audio = self._combine_audio_segments(audio_segments)
-            
+
+            # Get audio data from Kokoro result
+            audio_data = result["audio_data"]
+
             # Format audio data based on requested format
-            audio_data = self._format_audio_data(combined_audio, return_format)
-            
+            formatted_audio = self._format_audio_data(audio_data, return_format)
+
             # Calculate performance metrics
             processing_time = time.time() - start_time
-            audio_duration = len(combined_audio) / (2 * self.sample_rate)  # 2 bytes per sample
+            # Estimate audio duration (Kokoro outputs at 24kHz)
+            if hasattr(audio_data, '__len__'):
+                audio_duration = len(audio_data) / (2 * 24000)  # 2 bytes per sample, 24kHz
+            else:
+                audio_duration = 0.0
             realtime_factor = audio_duration / processing_time if processing_time > 0 else 0
-            
+
             # Update statistics
             self._update_stats(processing_time, audio_duration, realtime_factor)
             
@@ -123,14 +135,15 @@ class TTSService:
             
             return {
                 "success": True,
-                "audio_data": audio_data,
+                "audio_data": formatted_audio,
                 "metadata": {
                     "voice": voice,
+                    "kokoro_voice": kokoro_voice,
                     "text_length": len(text),
                     "audio_duration": audio_duration,
                     "processing_time": processing_time,
                     "realtime_factor": realtime_factor,
-                    "sample_rate": self.sample_rate,
+                    "sample_rate": 24000,  # Kokoro outputs at 24kHz
                     "format": return_format
                 }
             }
@@ -144,51 +157,21 @@ class TTSService:
                 "metadata": {}
             }
     
-    async def _generate_audio_segments(self, text: str, voice: str) -> List[bytes]:
-        """
-        Generate audio segments from text using the TTS engine
-        """
-        try:
-            # Use the engine to generate audio
-            audio_data = await self.engine.generate_speech(text, voice)
-            if audio_data:
-                return [audio_data]
-            else:
-                tts_service_logger.warning("⚠️ No audio data generated from engine")
-                return []
-        except Exception as e:
-            tts_service_logger.error(f"❌ Error in audio generation: {e}")
-            return []
-    
-    def _combine_audio_segments(self, segments: List[bytes]) -> bytes:
-        """Combine multiple audio segments into a single audio stream"""
-        if not segments:
-            return b""
-        
-        # Simple concatenation for now
-        # In production, this would include crossfading for smooth transitions
-        combined = b"".join(segments)
-        return combined
-    
-    def _format_audio_data(self, audio_bytes: bytes, format_type: str) -> Any:
+    def _format_audio_data(self, audio_data: Any, return_format: str) -> Any:
         """Format audio data according to requested format"""
-        if format_type == "raw":
-            return audio_bytes
-        elif format_type == "base64":
-            return base64.b64encode(audio_bytes).decode('utf-8')
-        elif format_type == "wav":
-            # Create WAV format
-            wav_buffer = BytesIO()
-            with wave.open(wav_buffer, 'wb') as wav_file:
-                wav_file.setnchannels(1)  # Mono
-                wav_file.setsampwidth(2)  # 16-bit
-                wav_file.setframerate(self.sample_rate)
-                wav_file.writeframes(audio_bytes)
-            
-            wav_data = wav_buffer.getvalue()
-            return base64.b64encode(wav_data).decode('utf-8')
-        else:
-            raise ValueError(f"Unsupported format: {format_type}")
+        if return_format == "base64":
+            if hasattr(audio_data, 'tobytes'):
+                return base64.b64encode(audio_data.tobytes()).decode('utf-8')
+            elif isinstance(audio_data, bytes):
+                return base64.b64encode(audio_data).decode('utf-8')
+            else:
+                return base64.b64encode(str(audio_data).encode()).decode('utf-8')
+        elif return_format == "raw":
+            if hasattr(audio_data, 'tobytes'):
+                return audio_data.tobytes()
+            return audio_data
+        else:  # wav format
+            return audio_data
     
     def _update_stats(self, processing_time: float, audio_duration: float, realtime_factor: float):
         """Update performance statistics"""
@@ -205,20 +188,22 @@ class TTSService:
     
     def get_available_voices(self) -> List[str]:
         """Get list of available voices"""
-        return self.engine.get_available_voices()
-    
+        # Return Kokoro voices
+        return ["af_heart", "af_bella", "af_nicole", "af_sarah", "hm_omega", "hf_alpha", "hf_beta", "hm_psi"]
+
     def get_service_info(self) -> Dict[str, Any]:
         """Get TTS service information and statistics"""
-        engine_info = self.engine.get_model_info()
-        
+        engine_info = self.kokoro_model.get_model_info() if self.kokoro_model else {}
+
         return {
             "service": "TTSService",
+            "engine": "Kokoro TTS",
             "initialized": self.is_initialized,
             "engine_info": engine_info,
             "statistics": self.generation_stats.copy(),
             "configuration": {
                 "default_voice": self.default_voice,
-                "sample_rate": self.sample_rate
+                "sample_rate": 24000  # Kokoro sample rate
             }
         }
     
@@ -240,7 +225,7 @@ class TTSService:
     
     def validate_voice(self, voice: str) -> bool:
         """Validate if a voice is available"""
-        return voice in self.engine.get_available_voices()
+        return voice in self.get_available_voices()
     
     def get_default_voice(self) -> str:
         """Get the default voice"""
@@ -255,3 +240,16 @@ class TTSService:
         else:
             tts_service_logger.warning(f"Invalid voice: {voice}")
             return False
+
+    async def generate_speech(self, text: str, voice: str = None) -> bytes:
+        """
+        Generate speech and return raw audio bytes (for compatibility with existing code)
+        """
+        result = await self.generate_speech_async(text, voice, return_format="raw")
+        if result["success"]:
+            return result["audio_data"]
+        else:
+            raise Exception(f"Speech generation failed: {result.get('error', 'Unknown error')}")
+
+# Create a global TTS service instance
+tts_service = TTSService()

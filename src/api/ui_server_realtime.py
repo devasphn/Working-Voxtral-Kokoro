@@ -1524,7 +1524,7 @@ async def api_status():
         is_healthy = (
             unified_manager.is_initialized and
             model_info['unified_manager']['voxtral_initialized'] and
-            model_info['unified_manager']['orpheus_initialized']
+            model_info['unified_manager']['kokoro_initialized']
         )
         
         voxtral_model = get_voxtral_model()
@@ -1545,7 +1545,7 @@ async def api_status():
             "unified_system": {
                 "initialized": unified_manager.is_initialized,
                 "voxtral_ready": model_info['unified_manager']['voxtral_initialized'],
-                "orpheus_ready": model_info['unified_manager']['orpheus_initialized'],
+                "kokoro_ready": model_info['unified_manager']['kokoro_initialized'],
                 "memory_manager_ready": model_info['unified_manager']['memory_manager_initialized']
             },
             "memory_stats": memory_stats.get("memory_stats", {}),
@@ -1560,8 +1560,8 @@ async def api_status():
                 "sample_rate": config.audio.sample_rate,
                 "tcp_ports": config.server.tcp_ports,
                 "latency_target": config.streaming.latency_target_ms,
-                "mode": "conversational_optimized_with_direct_orpheus",
-                "integration_type": "direct_orpheus",
+                "mode": "conversational_optimized_with_kokoro_tts",
+                "integration_type": "kokoro_tts",
                 "speech_to_speech_enabled": config.speech_to_speech.enabled,
                 "speech_to_speech_latency_target": config.speech_to_speech.latency_target_ms,
                 "mode": "conversational_optimized_with_vad_and_speech_to_speech" if config.speech_to_speech.enabled else "conversational_optimized_with_vad"
@@ -1572,7 +1572,7 @@ async def api_status():
             "status": "error",
             "timestamp": time.time(),
             "error": str(e),
-            "integration_type": "direct_orpheus"
+            "integration_type": "kokoro_tts"
         }, status_code=500)
 
 # WebSocket endpoint for CONVERSATIONAL streaming with VAD
@@ -1667,7 +1667,7 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
         # Get models from unified manager
         try:
             voxtral_model = await unified_manager.get_voxtral_model()
-            tts_service_direct = await unified_manager.get_orpheus_model()
+            kokoro_model = await unified_manager.get_kokoro_model()
         except Exception as e:
             streaming_logger.error(f"[CONVERSATION] Failed to get models: {e}")
             await websocket.send_text(json.dumps({
@@ -1740,21 +1740,29 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
                         "had_speech": result.get('had_speech', True)
                     }))
 
-                    # Generate TTS audio if we have a meaningful response using direct Orpheus
+                    # Generate TTS audio if we have a meaningful response using Kokoro TTS
                     if response and response.strip():
                         try:
                             # Start TTS timing
-                            tts_timing_id = performance_monitor.start_timing("orpheus_generation", {
+                            tts_timing_id = performance_monitor.start_timing("kokoro_generation", {
                                 "chunk_id": chunk_id,
                                 "text_length": len(response),
-                                "voice": "ऋतिका"
+                                "voice": "hm_omega"  # Kokoro Hindi voice
                             })
-                            
-                            # Generate speech using direct Orpheus model
-                            audio_data = await tts_service_direct.generate_speech(
+
+                            # Generate speech using Kokoro TTS model
+                            result = await kokoro_model.synthesize_speech(
                                 text=response,
-                                voice="ऋतिका"  # Use ऋतिका voice as requested
+                                voice="hm_omega"  # Use Kokoro Hindi voice instead of ऋतिका
                             )
+
+                            if not result.get("success", False):
+                                raise Exception(f"Kokoro TTS generation failed: {result.get('error', 'Unknown error')}")
+
+                            audio_data = result["audio_data"]
+                            # Convert numpy array to bytes if needed
+                            if hasattr(audio_data, 'tobytes'):
+                                audio_data = audio_data.tobytes()
                             
                             # End TTS timing
                             tts_generation_time = performance_monitor.end_timing(tts_timing_id)
@@ -1762,16 +1770,16 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
                             if audio_data:
                                 # Convert to base64 for transmission
                                 audio_b64 = base64.b64encode(audio_data).decode('utf-8')
-                                
+
                                 # Calculate audio duration
                                 audio_duration_ms = (len(audio_data) / 2) / 24000 * 1000  # 16-bit, 24kHz
-                                
+
                                 # Send audio response
                                 await websocket.send_text(json.dumps({
                                     "type": "audio_response",
                                     "audio_data": audio_b64,
                                     "chunk_id": chunk_id,
-                                    "voice": "ऋतिका",
+                                    "voice": "hm_omega",  # Kokoro Hindi voice
                                     "format": "wav",
                                     "metadata": {
                                         "audio_duration_ms": audio_duration_ms,
@@ -1781,12 +1789,12 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
                                     }
                                 }))
                                 
-                                streaming_logger.info(f"[TTS-DIRECT] Audio response generated for chunk {chunk_id} in {tts_generation_time:.1f}ms")
-                                
+                                streaming_logger.info(f"[TTS-KOKORO] Audio response generated for chunk {chunk_id} in {tts_generation_time:.1f}ms")
+
                                 # Log performance breakdown
                                 performance_monitor.log_latency_breakdown({
                                     "voxtral_processing_ms": voxtral_processing_time,
-                                    "orpheus_generation_ms": tts_generation_time,
+                                    "kokoro_generation_ms": tts_generation_time,
                                     "audio_conversion_ms": 0,  # Already included in generation
                                     "total_end_to_end_ms": voxtral_processing_time + tts_generation_time
                                 })
@@ -1837,21 +1845,21 @@ async def initialize_models_at_startup():
                 # Get model info for logging
                 model_info = unified_manager.get_model_info()
                 streaming_logger.info(f"📊 Voxtral initialized: {model_info['unified_manager']['voxtral_initialized']}")
-                streaming_logger.info(f"📊 Orpheus initialized: {model_info['unified_manager']['orpheus_initialized']}")
-                
+                streaming_logger.info(f"📊 Kokoro TTS initialized: {model_info['unified_manager']['kokoro_initialized']}")
+
                 # Log memory statistics
                 memory_stats = unified_manager.get_memory_stats()
                 if "memory_stats" in memory_stats:
                     stats = memory_stats["memory_stats"]
                     streaming_logger.info(f"💾 GPU Memory: {stats['used_vram_gb']:.2f}GB / {stats['total_vram_gb']:.2f}GB")
-                    streaming_logger.info(f"💾 Voxtral: {stats['voxtral_memory_gb']:.2f}GB, Orpheus: {stats['orpheus_memory_gb']:.2f}GB")
+                    streaming_logger.info(f"💾 Voxtral: {stats['voxtral_memory_gb']:.2f}GB, Kokoro: {stats['kokoro_memory_gb']:.2f}GB")
                 
             else:
                 raise Exception("Unified model manager initialization failed")
         else:
             streaming_logger.info("✅ Unified model manager already initialized")
 
-        streaming_logger.info("🎉 All models ready for conversation with direct Orpheus integration!")
+        streaming_logger.info("🎉 All models ready for conversation with Kokoro TTS integration!")
 
     except Exception as e:
         streaming_logger.error(f"❌ Failed to initialize unified model system: {e}")
