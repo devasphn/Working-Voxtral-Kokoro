@@ -1087,6 +1087,10 @@ async def home(request: Request):
                     audio.preload = 'auto';
                     audio.volume = 1.0;
 
+                    // Enhanced audio debugging
+                    log(`🎵 Audio metadata: ${JSON.stringify(metadata)}`);
+                    log(`🎵 Audio blob size: ${audioBlob.size} bytes, type: ${audioBlob.type}`);
+
                     // Store reference for cleanup
                     currentAudio = audio;
 
@@ -1095,27 +1099,46 @@ async def home(request: Request):
                         log(`🎵 Started loading audio chunk ${chunkId}`);
                     });
 
+                    audio.addEventListener('loadedmetadata', () => {
+                        log(`🎵 Audio metadata loaded - Duration: ${audio.duration}s, Sample Rate: ${audio.sampleRate || 'unknown'}Hz`);
+                    });
+
                     audio.addEventListener('canplaythrough', () => {
                         log(`🎵 Audio chunk ${chunkId} ready to play (${metadata.audio_duration_ms || 'unknown'}ms)`);
+                        log(`🎵 Browser audio info - Duration: ${audio.duration}s, Buffered: ${audio.buffered.length} ranges`);
                     });
 
                     audio.addEventListener('play', () => {
                         log(`🎵 Started playing audio chunk ${chunkId} with voice '${voice}'`);
+                        log(`🎵 Playback info - Current time: ${audio.currentTime}s, Volume: ${audio.volume}, Playback rate: ${audio.playbackRate}`);
                         updateStatus(`🔊 Playing AI response (${voice})...`, 'success');
                     });
 
+                    audio.addEventListener('timeupdate', () => {
+                        if (audio.currentTime > 0) {
+                            log(`🎵 Playing chunk ${chunkId} - Progress: ${audio.currentTime.toFixed(2)}s / ${audio.duration.toFixed(2)}s`);
+                        }
+                    });
+
                     audio.addEventListener('ended', () => {
-                        log(`✅ Finished playing audio chunk ${chunkId}`);
+                        log(`✅ Finished playing audio chunk ${chunkId} - Total duration: ${audio.duration}s`);
                         URL.revokeObjectURL(audioUrl);
                         currentAudio = null;
                         resolve();
                     });
 
                     audio.addEventListener('error', (e) => {
-                        log(`❌ Audio playback error for chunk ${chunkId}: ${e.message || 'Unknown error'}`);
+                        const errorDetails = {
+                            code: audio.error?.code,
+                            message: audio.error?.message,
+                            networkState: audio.networkState,
+                            readyState: audio.readyState
+                        };
+                        log(`❌ Audio playback error for chunk ${chunkId}: ${JSON.stringify(errorDetails)}`);
+                        log(`❌ Audio element state - src: ${audio.src.substring(0, 50)}..., duration: ${audio.duration}`);
                         URL.revokeObjectURL(audioUrl);
                         currentAudio = null;
-                        reject(new Error(`Audio playback failed: ${e.message || 'Unknown error'}`));
+                        reject(new Error(`Audio playback failed: ${JSON.stringify(errorDetails)}`));
                     });
 
                     audio.addEventListener('abort', () => {
@@ -1766,15 +1789,43 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
                             tts_generation_time = performance_monitor.end_timing(tts_timing_id)
 
                             if audio_data is not None and len(audio_data) > 0:
+                                # Audio quality validation and normalization
+                                audio_rms = np.sqrt(np.mean(audio_data**2))
+                                audio_peak = np.max(np.abs(audio_data))
+
+                                logger.info(f"🎵 Audio quality check - RMS: {audio_rms:.6f}, Peak: {audio_peak:.6f}")
+
+                                # Normalize audio if too quiet or too loud
+                                normalized_audio = audio_data
+                                if audio_rms < 0.05:  # Too quiet
+                                    target_rms = 0.2
+                                    gain = target_rms / (audio_rms + 1e-8)
+                                    normalized_audio = audio_data * gain
+                                    logger.info(f"🔊 Audio boosted by {gain:.2f}x (was too quiet)")
+                                elif audio_peak > 0.95:  # Risk of clipping
+                                    gain = 0.9 / audio_peak
+                                    normalized_audio = audio_data * gain
+                                    logger.info(f"🔉 Audio reduced by {gain:.2f}x (preventing clipping)")
+
                                 # Convert numpy array to proper WAV format with headers
                                 import soundfile as sf
                                 from io import BytesIO
 
-                                # Create WAV file in memory
+                                # Create WAV file in memory with normalized audio
                                 wav_buffer = BytesIO()
-                                sf.write(wav_buffer, audio_data, sample_rate, format='WAV', subtype='PCM_16')
+                                sf.write(wav_buffer, normalized_audio, sample_rate, format='WAV', subtype='PCM_16')
                                 wav_bytes = wav_buffer.getvalue()
                                 wav_buffer.close()
+
+                                # Validate WAV file creation
+                                if len(wav_bytes) < 100:  # WAV header alone is ~44 bytes
+                                    raise Exception(f"WAV file too small: {len(wav_bytes)} bytes")
+
+                                # Verify WAV headers
+                                if wav_bytes[:4] != b'RIFF' or wav_bytes[8:12] != b'WAVE':
+                                    raise Exception("Invalid WAV file headers")
+
+                                logger.info(f"✅ WAV file created: {len(wav_bytes)} bytes with proper headers")
 
                                 # Convert to base64 for transmission
                                 audio_b64 = base64.b64encode(wav_bytes).decode('utf-8')
