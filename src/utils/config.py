@@ -91,6 +91,9 @@ class TTSOrpheusDirectConfig(BaseModel):
     model_name: str = "canopylabs/orpheus-tts-0.1-finetune-prod"  # CORRECT Orpheus model
     max_model_len: int = 2048  # As per official example
     sample_rate: int = 24000   # As per official example
+    gpu_memory_utilization: float = 0.8  # Use 80% of GPU memory
+    max_seq_len: int = 2048  # Override default max sequence length
+    kv_cache_dtype: str = "auto"  # KV cache data type
 
 class TTSOrpheusServerConfig(BaseModel):
     """Legacy configuration for Orpheus-FastAPI server (deprecated)"""
@@ -121,6 +124,10 @@ class TTSConfig(BaseModel):
     default_voice: str = "ऋतिका"  # Updated to match user request
     sample_rate: int = 24000
     enabled: bool = True
+    # Kokoro TTS fallback settings
+    voice: str = "default"  # Kokoro voice
+    speed: float = 1.0  # Kokoro speech speed
+    lang_code: str = "en"  # Kokoro language code
     orpheus_direct: TTSOrpheusDirectConfig = TTSOrpheusDirectConfig()
     orpheus_server: TTSOrpheusServerConfig = TTSOrpheusServerConfig()  # Legacy support
     voices: TTSVoicesConfig = TTSVoicesConfig()

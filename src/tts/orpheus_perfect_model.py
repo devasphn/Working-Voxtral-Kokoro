@@ -10,7 +10,7 @@ from typing import Dict, Any, Optional, List, AsyncGenerator
 from threading import Lock
 import gc
 
-# Import the actual streaming model and mock fallback
+# Import the actual streaming model and Kokoro fallback
 try:
     from .orpheus_streaming_model import OrpheusStreamingModel, ModelInitializationError, AudioGenerationError
     ORPHEUS_STREAMING_AVAILABLE = True
@@ -18,8 +18,13 @@ except Exception as e:
     perfect_logger.warning(f"OrpheusStreamingModel not available: {e}")
     ORPHEUS_STREAMING_AVAILABLE = False
 
-# Import mock TTS as fallback
-from .mock_tts_service import MockTTSService
+# Import Kokoro TTS as fallback
+try:
+    from src.models.kokoro_model_realtime import KokoroTTSModel
+    KOKORO_AVAILABLE = True
+except Exception as e:
+    perfect_logger.warning(f"Kokoro TTS not available: {e}")
+    KOKORO_AVAILABLE = False
 
 class ModelInitializationError(Exception):
     """Raised when model initialization fails"""
@@ -41,8 +46,8 @@ class OrpheusPerfectModel:
     
     def __init__(self):
         self.streaming_model = None
-        self.mock_model = None
-        self.use_mock = False
+        self.kokoro_model = None
+        self.use_kokoro = False
         self.is_initialized = False
         self.initialization_lock = Lock()
 
@@ -86,23 +91,26 @@ class OrpheusPerfectModel:
 
                             return True
                         else:
-                            perfect_logger.warning("⚠️ Real Orpheus model failed, falling back to mock")
+                            perfect_logger.warning("⚠️ Real Orpheus model failed, falling back to Kokoro TTS")
                     except Exception as e:
-                        perfect_logger.warning(f"⚠️ Real Orpheus model error: {e}, falling back to mock")
+                        perfect_logger.warning(f"⚠️ Real Orpheus model error: {e}, falling back to Kokoro TTS")
 
-                # Fall back to mock TTS service
-                perfect_logger.info("🎭 Initializing Mock TTS fallback...")
-                self.mock_model = MockTTSService()
-                success = await self.mock_model.initialize()
+                # Fall back to Kokoro TTS service
+                if KOKORO_AVAILABLE:
+                    perfect_logger.info("🎵 Initializing Kokoro TTS fallback...")
+                    self.kokoro_model = KokoroTTSModel()
+                    success = await self.kokoro_model.initialize()
 
-                if success:
-                    self.use_mock = True
-                    self.is_initialized = True
-                    init_time = time.time() - start_time
-                    perfect_logger.info(f"🎉 OrpheusPerfectModel (mock) initialized successfully in {init_time:.2f}s")
-                    return True
+                    if success:
+                        self.use_kokoro = True
+                        self.is_initialized = True
+                        init_time = time.time() - start_time
+                        perfect_logger.info(f"🎉 OrpheusPerfectModel (Kokoro) initialized successfully in {init_time:.2f}s")
+                        return True
+                    else:
+                        perfect_logger.error("❌ Both Orpheus and Kokoro TTS initialization failed")
                 else:
-                    perfect_logger.error("❌ Both real and mock TTS initialization failed")
+                    perfect_logger.error("❌ Orpheus failed and Kokoro TTS not available")
                     return False
                     
         except Exception as e:
@@ -121,8 +129,16 @@ class OrpheusPerfectModel:
             perfect_logger.info(f"🎵 Generating speech: '{text[:50]}...' with voice '{voice or 'default'}'")
             
             # Use the appropriate model's generate_speech method
-            if self.use_mock:
-                audio_data = await self.mock_model.generate_speech(text, voice)
+            if self.use_kokoro:
+                # Kokoro returns a different format, need to extract audio_data
+                result = await self.kokoro_model.synthesize_speech(text, voice)
+                if result.get('success', False):
+                    audio_data = result['audio_data']
+                    # Convert numpy array to bytes if needed
+                    if hasattr(audio_data, 'tobytes'):
+                        audio_data = audio_data.tobytes()
+                else:
+                    raise AudioGenerationError(f"Kokoro TTS generation failed: {result.get('error', 'Unknown error')}")
             else:
                 audio_data = await self.streaming_model.generate_speech(text, voice)
             
@@ -150,9 +166,22 @@ class OrpheusPerfectModel:
             perfect_logger.info(f"🎵 Streaming speech: '{text[:50]}...' with voice '{voice or 'default'}'")
             
             # Use the appropriate model's generate_speech_stream method
-            if self.use_mock:
-                async for chunk in self.mock_model.generate_speech_stream(text, voice):
-                    yield chunk
+            if self.use_kokoro:
+                # Kokoro doesn't have streaming, so generate full audio and chunk it
+                result = await self.kokoro_model.synthesize_speech(text, voice)
+                if result.get('success', False):
+                    audio_data = result['audio_data']
+                    if hasattr(audio_data, 'tobytes'):
+                        audio_bytes = audio_data.tobytes()
+                    else:
+                        audio_bytes = audio_data
+
+                    # Yield in chunks for streaming effect
+                    chunk_size = 1024
+                    for i in range(0, len(audio_bytes), chunk_size):
+                        yield audio_bytes[i:i + chunk_size]
+                else:
+                    raise AudioGenerationError(f"Kokoro TTS streaming failed: {result.get('error', 'Unknown error')}")
             else:
                 async for chunk in self.streaming_model.generate_speech_stream(text, voice):
                     yield chunk
@@ -163,8 +192,9 @@ class OrpheusPerfectModel:
     
     def get_available_voices(self) -> List[str]:
         """Get list of available voices"""
-        if self.use_mock:
-            return self.mock_model.get_available_voices()
+        if self.use_kokoro:
+            # Kokoro has different voice system, return basic voices
+            return ["default", "ऋतिका"]
         elif self.streaming_model:
             return self.streaming_model.get_available_voices()
         else:
@@ -172,8 +202,12 @@ class OrpheusPerfectModel:
     
     def get_model_info(self) -> Dict[str, Any]:
         """Get comprehensive model information"""
-        if self.use_mock:
-            base_info = self.mock_model.get_model_info() if self.mock_model else {}
+        if self.use_kokoro:
+            base_info = {
+                "model_name": "Kokoro TTS (fallback)",
+                "status": "kokoro_fallback",
+                "integration_type": "kokoro_tts"
+            }
         elif self.streaming_model:
             base_info = self.streaming_model.get_model_info()
         else:

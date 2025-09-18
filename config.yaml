@@ -40,11 +40,18 @@ tts:
   default_voice: "ऋतिका"  # Hindi voice as requested
   sample_rate: 24000
   enabled: true
+  # Kokoro TTS fallback settings
+  voice: "default"  # Kokoro voice
+  speed: 1.0  # Kokoro speech speed
+  lang_code: "en"  # Kokoro language code
   # Orpheus Direct Integration
   orpheus_direct:
     model_name: "canopylabs/orpheus-tts-0.1-finetune-prod"
     max_model_len: 2048
     sample_rate: 24000
+    gpu_memory_utilization: 0.8  # Use 80% of GPU memory
+    max_seq_len: 2048  # Override default max sequence length
+    kv_cache_dtype: "auto"  # KV cache data type
   # Available voices by language
   voices:
     english: ["tara", "leah", "jess", "leo", "dan", "mia", "zac", "zoe"]

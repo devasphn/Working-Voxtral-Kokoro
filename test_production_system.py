@@ -8,6 +8,7 @@ import asyncio
 import aiohttp
 import websockets
 import json
+import base64
 import time
 import sys
 import logging
@@ -159,7 +160,6 @@ class ProductionSystemTester:
             audio_data = np.sin(2 * np.pi * 440 * t).astype(np.float32)
             
             # Convert to base64
-            import base64
             audio_bytes = audio_data.tobytes()
             audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
             

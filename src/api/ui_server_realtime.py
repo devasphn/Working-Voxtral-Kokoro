@@ -1761,7 +1761,6 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
 
                             if audio_data:
                                 # Convert to base64 for transmission
-                                import base64
                                 audio_b64 = base64.b64encode(audio_data).decode('utf-8')
                                 
                                 # Calculate audio duration

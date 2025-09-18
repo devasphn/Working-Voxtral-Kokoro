@@ -57,14 +57,21 @@ class OrpheusStreamingModel:
         self.model = None
         self.model_lock = Lock()
         self.is_initialized = False
-        
-        # Configuration from official Flask example
-        self.model_name = "canopylabs/orpheus-tts-0.1-finetune-prod"
-        self.sample_rate = 24000
+
+        # Import configuration
+        from src.utils.config import config
+
+        # Configuration from config file
+        self.model_name = config.tts.orpheus_direct.model_name
+        self.sample_rate = config.tts.orpheus_direct.sample_rate
         self.bits_per_sample = 16
         self.channels = 1
-        
-        # No memory parameters needed - OrpheusModel handles this internally
+
+        # Memory configuration parameters
+        self.max_model_len = config.tts.orpheus_direct.max_model_len
+        self.gpu_memory_utilization = config.tts.orpheus_direct.gpu_memory_utilization
+        self.max_seq_len = config.tts.orpheus_direct.max_seq_len
+        self.kv_cache_dtype = config.tts.orpheus_direct.kv_cache_dtype
         
         # Available voices from official documentation
         self.available_voices = [
@@ -118,11 +125,18 @@ class OrpheusStreamingModel:
                     "orpheus_tts package not available or failed to import. Install with: pip install orpheus-speech"
                 )
             
-            # EXACT initialization from your Flask example
+            # Enhanced initialization with memory parameters
             orpheus_logger.info(f"📥 Loading Orpheus model: {self.model_name}")
-            
-            # CORRECT initialization - exactly as in your Flask example
-            self.model = OrpheusModel(model_name=self.model_name)
+            orpheus_logger.info(f"🧠 Memory config - GPU utilization: {self.gpu_memory_utilization}, Max model len: {self.max_model_len}")
+
+            # Initialize with memory optimization parameters
+            self.model = OrpheusModel(
+                model_name=self.model_name,
+                max_model_len=self.max_model_len,
+                gpu_memory_utilization=self.gpu_memory_utilization,
+                max_seq_len=self.max_seq_len,
+                kv_cache_dtype=self.kv_cache_dtype
+            )
             
             orpheus_logger.info("✅ Orpheus model loaded successfully with streaming API")
             
