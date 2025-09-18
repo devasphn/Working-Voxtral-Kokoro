@@ -127,7 +127,7 @@ class TTSConfig(BaseModel):
     # Kokoro TTS fallback settings
     voice: str = "default"  # Kokoro voice
     speed: float = 1.0  # Kokoro speech speed
-    lang_code: str = "en"  # Kokoro language code
+    lang_code: str = "a"  # Kokoro language code (a=American English, b=British English)
     orpheus_direct: TTSOrpheusDirectConfig = TTSOrpheusDirectConfig()
     orpheus_server: TTSOrpheusServerConfig = TTSOrpheusServerConfig()  # Legacy support
     voices: TTSVoicesConfig = TTSVoicesConfig()

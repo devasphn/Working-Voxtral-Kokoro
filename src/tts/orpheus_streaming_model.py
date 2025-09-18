@@ -129,10 +129,9 @@ class OrpheusStreamingModel:
             orpheus_logger.info(f"📥 Loading Orpheus model: {self.model_name}")
             orpheus_logger.info(f"🧠 Memory config - GPU utilization: {self.gpu_memory_utilization}, Max model len: {self.max_model_len}")
 
-            # Initialize with only supported parameters (based on official API)
+            # Initialize with only the model name (based on actual API)
             self.model = OrpheusModel(
-                model_name=self.model_name,
-                max_model_len=self.max_model_len
+                model_name=self.model_name
             )
             
             orpheus_logger.info("✅ Orpheus model loaded successfully with streaming API")

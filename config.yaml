@@ -43,7 +43,7 @@ tts:
   # Kokoro TTS fallback settings
   voice: "default"  # Kokoro voice
   speed: 1.0  # Kokoro speech speed
-  lang_code: "en"  # Kokoro language code
+  lang_code: "a"  # Kokoro language code (a=American English, b=British English)
   # Orpheus Direct Integration
   orpheus_direct:
     model_name: "canopylabs/orpheus-tts-0.1-finetune-prod"
