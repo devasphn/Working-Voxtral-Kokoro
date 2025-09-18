@@ -1760,19 +1760,27 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
                                 raise Exception(f"Kokoro TTS generation failed: {result.get('error', 'Unknown error')}")
 
                             audio_data = result["audio_data"]
-                            # Convert numpy array to bytes if needed
-                            if hasattr(audio_data, 'tobytes'):
-                                audio_data = audio_data.tobytes()
-                            
+                            sample_rate = result.get("sample_rate", 24000)
+
                             # End TTS timing
                             tts_generation_time = performance_monitor.end_timing(tts_timing_id)
 
-                            if audio_data:
-                                # Convert to base64 for transmission
-                                audio_b64 = base64.b64encode(audio_data).decode('utf-8')
+                            if audio_data is not None and len(audio_data) > 0:
+                                # Convert numpy array to proper WAV format with headers
+                                import soundfile as sf
+                                from io import BytesIO
 
-                                # Calculate audio duration
-                                audio_duration_ms = (len(audio_data) / 2) / 24000 * 1000  # 16-bit, 24kHz
+                                # Create WAV file in memory
+                                wav_buffer = BytesIO()
+                                sf.write(wav_buffer, audio_data, sample_rate, format='WAV', subtype='PCM_16')
+                                wav_bytes = wav_buffer.getvalue()
+                                wav_buffer.close()
+
+                                # Convert to base64 for transmission
+                                audio_b64 = base64.b64encode(wav_bytes).decode('utf-8')
+
+                                # Calculate audio duration from actual audio samples
+                                audio_duration_ms = (len(audio_data) / sample_rate) * 1000
 
                                 # Send audio response
                                 await websocket.send_text(json.dumps({
@@ -1784,8 +1792,10 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
                                     "metadata": {
                                         "audio_duration_ms": audio_duration_ms,
                                         "generation_time_ms": tts_generation_time,
-                                        "sample_rate": 24000,
-                                        "channels": 1
+                                        "sample_rate": sample_rate,
+                                        "channels": 1,
+                                        "format": "WAV",
+                                        "subtype": "PCM_16"
                                     }
                                 }))
                                 
