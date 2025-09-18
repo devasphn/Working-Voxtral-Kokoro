@@ -50,53 +50,54 @@ class KokoroTTSModel:
         tts_logger.info(f"🎵 KokoroTTSModel initialized with device: {self.device}")
         tts_logger.info(f"   🎤 Voice: {self.voice}, Speed: {self.speed}, Lang: {self.lang_code}")
     
-    async def initialize(self):
+    async def initialize(self) -> bool:
         """Initialize the Kokoro TTS model with production-ready settings"""
         if self.is_initialized:
             tts_logger.info("🎵 Kokoro TTS model already initialized")
-            return
-        
+            return True
+
         start_time = time.time()
         tts_logger.info("🚀 Initializing Kokoro TTS model for real-time synthesis...")
-        
+
         try:
             # Import Kokoro pipeline
             from kokoro import KPipeline
-            
+
             tts_logger.info(f"📥 Loading Kokoro pipeline with language code: {self.lang_code}")
-            
+
             # Initialize pipeline with language code
             self.pipeline = KPipeline(lang_code=self.lang_code)
-            
+
             # Test the pipeline with a short sample
             test_text = "Kokoro TTS initialization test."
             tts_logger.info("🧪 Testing Kokoro pipeline with sample text...")
-            
+
             test_generator = self.pipeline(test_text, voice=self.voice, speed=self.speed)
             test_audio = None
-            
+
             for i, (gs, ps, audio) in enumerate(test_generator):
                 test_audio = audio
                 break  # Just test the first chunk
-            
+
             if test_audio is not None:
                 tts_logger.info(f"✅ Kokoro pipeline test successful - generated {len(test_audio)} samples")
             else:
                 raise RuntimeError("Pipeline test failed - no audio generated")
-            
+
             self.is_initialized = True
             init_time = time.time() - start_time
             tts_logger.info(f"🎉 Kokoro TTS model fully initialized in {init_time:.2f}s and ready for synthesis!")
-            
+            return True
+
         except ImportError as e:
             tts_logger.error(f"❌ Failed to import Kokoro: {e}")
             tts_logger.error("💡 Please install Kokoro: pip install kokoro>=0.9.4")
-            raise
+            return False
         except Exception as e:
             tts_logger.error(f"❌ Failed to initialize Kokoro TTS model: {e}")
             import traceback
             tts_logger.error(f"❌ Full error traceback: {traceback.format_exc()}")
-            raise
+            return False
     
     async def synthesize_speech(self, text: str, voice: Optional[str] = None, 
                                speed: Optional[float] = None, chunk_id: Optional[str] = None) -> Dict[str, Any]:
