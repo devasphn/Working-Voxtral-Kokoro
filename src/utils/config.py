@@ -91,7 +91,7 @@ class TTSOrpheusDirectConfig(BaseModel):
     model_name: str = "canopylabs/orpheus-tts-0.1-finetune-prod"  # CORRECT Orpheus model
     max_model_len: int = 2048  # As per official example
     sample_rate: int = 24000   # As per official example
-    
+
 class TTSOrpheusServerConfig(BaseModel):
     """Legacy configuration for Orpheus-FastAPI server (deprecated)"""
     host: str = "localhost"
@@ -107,7 +107,7 @@ class TTSPerformanceConfig(BaseModel):
     num_workers: int = 4
     target_latency_ms: int = 150  # Target for TTS generation
     memory_optimization: str = "balanced"  # "performance", "balanced", "memory_efficient"
-    
+
 class GPUMemoryConfig(BaseModel):
     """GPU memory management configuration"""
     min_vram_gb: float = 8.0
@@ -127,6 +127,14 @@ class TTSConfig(BaseModel):
     performance: TTSPerformanceConfig = TTSPerformanceConfig()
     gpu_memory: GPUMemoryConfig = GPUMemoryConfig()
 
+class SpeechToSpeechConfig(BaseModel):
+    enabled: bool = True
+    latency_target_ms: int = 300  # Updated to match <300ms requirement
+    buffer_size: int = 8192
+    output_format: str = "wav"
+    quality: str = "high"
+    emotional_expression: bool = True
+
 class Config(BaseSettings):
     """Main configuration class using BaseSettings for environment variable support"""
     server: ServerConfig = ServerConfig()
@@ -137,6 +145,7 @@ class Config(BaseSettings):
     logging: LoggingConfig = LoggingConfig()
     tts: TTSConfig = TTSConfig()
     performance: PerformanceConfig = PerformanceConfig()
+    speech_to_speech: SpeechToSpeechConfig = SpeechToSpeechConfig()
     
     # Pydantic v2 settings configuration with fallback
     if PYDANTIC_SETTINGS_AVAILABLE and SettingsConfigDict is not None:

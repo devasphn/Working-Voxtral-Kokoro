@@ -34,6 +34,7 @@ streaming:
   timeout_seconds: 300
   latency_target_ms: 200
 
+<<<<<<< HEAD
 # TTS (Text-to-Speech) configuration
 tts:
   engine: "orpheus-fastapi"
@@ -61,6 +62,27 @@ tts:
     batch_size: 16
     max_queue_size: 32
     num_workers: 4
+=======
+# Kokoro TTS configuration for speech-to-speech
+tts:
+  model_name: "hexgrad/Kokoro-82M"
+  cache_dir: "./model_cache/kokoro"
+  device: "cuda"
+  sample_rate: 24000
+  voice: "af_heart"
+  speed: 1.0
+  lang_code: "a"  # American English
+  emotional_expression: true
+
+# Speech-to-Speech pipeline configuration
+speech_to_speech:
+  enabled: true
+  latency_target_ms: 500
+  buffer_size: 8192
+  output_format: "wav"
+  quality: "high"
+  emotional_expression: true
+>>>>>>> c41ad18e382c0a60ca2ba17a0f79b53db0586996
   
 logging:
   level: "INFO"

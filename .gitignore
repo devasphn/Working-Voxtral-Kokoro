@@ -1,0 +1,140 @@
+# Production Speech-to-Speech System - Git Ignore File
+
+# Environment files with sensitive tokens
+.env
+.env.local
+.env.production
+.env.staging
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Model cache and downloads
+model_cache/
+cache/
+models/
+*.bin
+*.safetensors
+*.onnx
+*.pt
+*.pth
+
+# Logs and temporary files
+logs/
+*.log
+temp/
+tmp/
+.tmp/
+
+# Test results
+test_results/
+test_output.log
+*_test_results_*.json
+*_test_report_*.json
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Audio files (if generated during testing)
+*.wav
+*.mp3
+*.flac
+*.ogg
+
+# Process ID files
+*.pid
+.server.pid
+.system.pid
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# Security - Never commit these
+secrets.txt
+tokens.txt
+credentials.json
+private_keys/
+
+# RunPod specific
+runpod_logs/
+pod_data/
+
+# Production deployment artifacts
+deployment_logs/
+performance_reports/
