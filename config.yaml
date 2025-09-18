@@ -34,19 +34,17 @@ streaming:
   timeout_seconds: 300
   latency_target_ms: 200
 
-<<<<<<< HEAD
-# TTS (Text-to-Speech) configuration
+# TTS (Text-to-Speech) configuration - Orpheus TTS
 tts:
-  engine: "orpheus-fastapi"
+  engine: "orpheus-direct"
   default_voice: "ऋतिका"  # Hindi voice as requested
   sample_rate: 24000
   enabled: true
-  # Orpheus-FastAPI server configuration
-  orpheus_server:
-    host: "localhost"
-    port: 1234
-    timeout: 30
-    model_path: "/workspace/models/Orpheus-3b-FT-Q8_0.gguf"
+  # Orpheus Direct Integration
+  orpheus_direct:
+    model_name: "canopylabs/orpheus-tts-0.1-finetune-prod"
+    max_model_len: 2048
+    sample_rate: 24000
   # Available voices by language
   voices:
     english: ["tara", "leah", "jess", "leo", "dan", "mia", "zac", "zoe"]
@@ -59,30 +57,19 @@ tts:
     italian: ["pietro", "giulia", "carlo"]
   # Performance settings
   performance:
-    batch_size: 16
+    batch_size: 1  # Direct integration uses batch_size=1
     max_queue_size: 32
     num_workers: 4
-=======
-# Kokoro TTS configuration for speech-to-speech
-tts:
-  model_name: "hexgrad/Kokoro-82M"
-  cache_dir: "./model_cache/kokoro"
-  device: "cuda"
-  sample_rate: 24000
-  voice: "af_heart"
-  speed: 1.0
-  lang_code: "a"  # American English
-  emotional_expression: true
+    target_latency_ms: 150
 
 # Speech-to-Speech pipeline configuration
 speech_to_speech:
   enabled: true
-  latency_target_ms: 500
+  latency_target_ms: 300  # Updated to match <300ms requirement
   buffer_size: 8192
   output_format: "wav"
   quality: "high"
   emotional_expression: true
->>>>>>> c41ad18e382c0a60ca2ba17a0f79b53db0586996
   
 logging:
   level: "INFO"
