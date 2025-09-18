@@ -39,11 +39,8 @@ streaming_logger.setLevel(logging.DEBUG)
 # Global variables for unified model management
 _unified_manager = None
 _audio_processor = None
-<<<<<<< HEAD
 _performance_monitor = None
-=======
 _speech_to_speech_pipeline = None
->>>>>>> c41ad18e382c0a60ca2ba17a0f79b53db0586996
 
 # Response deduplication tracking
 recent_responses = {}  # client_id -> last_response_text
@@ -66,7 +63,6 @@ def get_audio_processor():
         streaming_logger.info("Audio processor lazy-loaded")
     return _audio_processor
 
-<<<<<<< HEAD
 def get_performance_monitor():
     """Get performance monitor instance"""
     global _performance_monitor
@@ -75,7 +71,6 @@ def get_performance_monitor():
         _performance_monitor = performance_monitor
         streaming_logger.info("Performance monitor loaded")
     return _performance_monitor
-=======
 def get_speech_to_speech_pipeline():
     """Lazy initialization of Speech-to-Speech pipeline"""
     global _speech_to_speech_pipeline
@@ -84,7 +79,6 @@ def get_speech_to_speech_pipeline():
         _speech_to_speech_pipeline = speech_to_speech_pipeline
         streaming_logger.info("Speech-to-Speech pipeline lazy-loaded")
     return _speech_to_speech_pipeline
->>>>>>> c41ad18e382c0a60ca2ba17a0f79b53db0586996
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -535,13 +529,11 @@ async def home(request: Request):
         let pendingResponse = false;
         let lastResponseText = '';  // For deduplication
 
-<<<<<<< HEAD
         // Audio playback queue management
         let audioQueue = [];
         let isPlayingAudio = false;
         let currentAudio = null;
         
-=======
         // Speech-to-Speech specific variables
         let currentMode = 'transcribe';
         let selectedVoice = 'af_heart';
@@ -549,7 +541,6 @@ async def home(request: Request):
         let currentConversationId = null;
         let speechToSpeechActive = false;
 
->>>>>>> c41ad18e382c0a60ca2ba17a0f79b53db0586996
         // Enhanced configuration for continuous speech capture
         const CHUNK_SIZE = 4096;
         const CHUNK_INTERVAL = 100;  // Reduced for more responsive VAD (was 1000ms)
@@ -939,11 +930,9 @@ async def home(request: Request):
                     updateStatus(data.message, 'loading');
                     break;
 
-<<<<<<< HEAD
                 case 'audio_response':
                     // Handle TTS audio response
                     handleAudioResponse(data);
-=======
                 // Speech-to-Speech message types
                 case 'processing':
                     if (speechToSpeechActive) {
@@ -1012,7 +1001,6 @@ async def home(request: Request):
                             log(`Emotional context: ${data.emotion_analysis.emotional_reasoning}`);
                         }
                     }
->>>>>>> c41ad18e382c0a60ca2ba17a0f79b53db0586996
                     break;
 
                 default:
@@ -1524,7 +1512,6 @@ async def home(request: Request):
 async def api_status():
     """API endpoint for unified model system status"""
     try:
-<<<<<<< HEAD
         unified_manager = get_unified_manager()
         performance_monitor = get_performance_monitor()
         
@@ -1540,7 +1527,6 @@ async def api_status():
             model_info['unified_manager']['orpheus_initialized']
         )
         
-=======
         voxtral_model = get_voxtral_model()
         model_info = voxtral_model.get_model_info()
 
@@ -1553,11 +1539,9 @@ async def api_status():
             except Exception as e:
                 speech_to_speech_info = {"error": str(e), "enabled": False}
 
->>>>>>> c41ad18e382c0a60ca2ba17a0f79b53db0586996
         return JSONResponse({
             "status": "healthy" if is_healthy else "initializing",
             "timestamp": time.time(),
-<<<<<<< HEAD
             "unified_system": {
                 "initialized": unified_manager.is_initialized,
                 "voxtral_ready": model_info['unified_manager']['voxtral_initialized'],
@@ -1570,22 +1554,17 @@ async def api_status():
                 "average_latency_ms": performance_summary["statistics"]["average_latency_ms"],
                 "operations_within_target": performance_summary["statistics"]["operations_within_target"]
             },
-=======
             "model": model_info,
             "speech_to_speech": speech_to_speech_info,
->>>>>>> c41ad18e382c0a60ca2ba17a0f79b53db0586996
             "config": {
                 "sample_rate": config.audio.sample_rate,
                 "tcp_ports": config.server.tcp_ports,
                 "latency_target": config.streaming.latency_target_ms,
-<<<<<<< HEAD
                 "mode": "conversational_optimized_with_direct_orpheus",
-                "integration_type": "direct_orpheus"
-=======
+                "integration_type": "direct_orpheus",
                 "speech_to_speech_enabled": config.speech_to_speech.enabled,
                 "speech_to_speech_latency_target": config.speech_to_speech.latency_target_ms,
                 "mode": "conversational_optimized_with_vad_and_speech_to_speech" if config.speech_to_speech.enabled else "conversational_optimized_with_vad"
->>>>>>> c41ad18e382c0a60ca2ba17a0f79b53db0586996
             }
         })
     except Exception as e:
