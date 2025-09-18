@@ -60,6 +60,22 @@ class KokoroTTSModel:
         tts_logger.info("🚀 Initializing Kokoro TTS model for real-time synthesis...")
 
         try:
+            # Check and download model files if needed
+            from src.utils.kokoro_model_manager import kokoro_model_manager
+
+            tts_logger.info("🔍 Checking Kokoro model files...")
+            status = kokoro_model_manager.get_model_status()
+
+            if status['integrity_percentage'] < 100:
+                tts_logger.info(f"📥 Model files incomplete ({status['integrity_percentage']:.1f}%), downloading...")
+                download_success = kokoro_model_manager.download_model_files()
+                if not download_success:
+                    tts_logger.error("❌ Failed to download Kokoro model files")
+                    return False
+                tts_logger.info("✅ Model files downloaded successfully")
+            else:
+                tts_logger.info("✅ All model files verified and ready")
+
             # Import Kokoro pipeline
             from kokoro import KPipeline
 

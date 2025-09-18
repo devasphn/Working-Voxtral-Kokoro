@@ -59,7 +59,7 @@ class PerformanceMonitor:
         # Performance targets (in milliseconds)
         self.targets = {
             "voxtral_processing_ms": 100,
-            "orpheus_generation_ms": 150,
+            "kokoro_generation_ms": 150,
             "audio_conversion_ms": 50,
             "total_end_to_end_ms": 300
         }

@@ -1,6 +1,6 @@
 """
-GPU Memory Manager for Orpheus TTS Integration
-Handles shared GPU memory allocation between Voxtral and Orpheus models
+GPU Memory Manager for Kokoro TTS Integration
+Handles shared GPU memory allocation between Voxtral and Kokoro TTS models
 """
 
 import torch
@@ -21,7 +21,7 @@ class MemoryStats:
     total_vram_gb: float
     used_vram_gb: float
     voxtral_memory_gb: float
-    orpheus_memory_gb: float
+    kokoro_memory_gb: float
     available_vram_gb: float
     system_ram_gb: float
     system_ram_used_gb: float
@@ -37,21 +37,21 @@ class MemoryAllocationError(Exception):
 class GPUMemoryManager:
     """
     Optimized GPU memory allocation and sharing between models
-    Ensures efficient VRAM usage for Voxtral and Orpheus integration
+    Ensures efficient VRAM usage for Voxtral and Kokoro TTS integration
     """
-    
+
     def __init__(self):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.memory_pool = None
         self.allocated_memory = {}
         self.voxtral_memory_gb = 0.0
-        self.orpheus_memory_gb = 0.0
-        
+        self.kokoro_memory_gb = 0.0
+
         # Memory requirements (in GB)
         self.min_vram_gb = 8.0  # RTX 3070/4060 Ti minimum
         self.recommended_vram_gb = 16.0  # RTX A4500 recommended
         self.voxtral_base_memory_gb = 4.5  # Estimated Voxtral memory usage
-        self.orpheus_base_memory_gb = 2.5  # Estimated Orpheus + SNAC memory usage
+        self.kokoro_base_memory_gb = 1.5  # Estimated Kokoro TTS memory usage (lighter than Orpheus)
         
         gpu_logger.info(f"GPUMemoryManager initialized for device: {self.device}")
         
@@ -79,7 +79,7 @@ class GPUMemoryManager:
             gpu_logger.info(f"   Total VRAM: {total_memory_gb:.2f} GB")
             gpu_logger.info(f"   Currently allocated: {allocated_memory_gb:.2f} GB")
             gpu_logger.info(f"   Available: {available_memory_gb:.2f} GB")
-            gpu_logger.info(f"   Required for models: {self.voxtral_base_memory_gb + self.orpheus_base_memory_gb:.2f} GB")
+            gpu_logger.info(f"   Required for models: {self.voxtral_base_memory_gb + self.kokoro_base_memory_gb:.2f} GB")
             
             # Check minimum requirements
             if total_memory_gb < self.min_vram_gb:
@@ -202,8 +202,8 @@ class GPUMemoryManager:
         
         if model_name.lower() == "voxtral":
             self.voxtral_memory_gb = memory_gb
-        elif model_name.lower() == "orpheus":
-            self.orpheus_memory_gb = memory_gb
+        elif model_name.lower() == "kokoro":
+            self.kokoro_memory_gb = memory_gb
             
         gpu_logger.info(f"📊 Tracking {model_name} memory usage: {memory_gb:.2f} GB")
     
@@ -235,7 +235,7 @@ class GPUMemoryManager:
                 total_vram_gb=total_vram_gb,
                 used_vram_gb=used_vram_gb,
                 voxtral_memory_gb=self.voxtral_memory_gb,
-                orpheus_memory_gb=self.orpheus_memory_gb,
+                kokoro_memory_gb=self.kokoro_memory_gb,
                 available_vram_gb=available_vram_gb,
                 system_ram_gb=system_ram_gb,
                 system_ram_used_gb=system_ram_used_gb
@@ -326,7 +326,7 @@ class GPUMemoryManager:
                 warnings.append("System RAM usage critically high (>90%)")
             
             # Check for memory leaks (simplified detection)
-            expected_model_memory = self.voxtral_memory_gb + self.orpheus_memory_gb
+            expected_model_memory = self.voxtral_memory_gb + self.kokoro_memory_gb
             if stats.used_vram_gb > expected_model_memory * 1.5:  # 50% overhead threshold
                 warnings.append("Potential memory leak detected")
             

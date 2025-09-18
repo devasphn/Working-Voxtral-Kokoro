@@ -192,4 +192,83 @@ python -m src.api.ui_server_realtime
 3. **Monitor performance** and memory usage improvements
 4. **Update documentation** if needed for deployment
 
-The Voxtral-Final project now runs exclusively on Kokoro TTS with complete Orpheus removal! 🎊
+## 🔧 **Critical Issues Fixed (Latest Update)**
+
+### **Issue 1: Memory Statistics Errors**
+**Problem**: `'MemoryStats' object has no attribute 'kokoro_memory_gb'`
+
+**Root Cause**: The `MemoryStats` dataclass and `GPUMemoryManager` still referenced `orpheus_memory_gb` instead of `kokoro_memory_gb`.
+
+**Fix Applied**:
+- Updated `MemoryStats` dataclass to use `kokoro_memory_gb` field
+- Modified `GPUMemoryManager.track_model_memory()` to track "kokoro" instead of "orpheus"
+- Updated `get_memory_stats()` to return `kokoro_memory_gb`
+- Fixed memory leak detection to use `kokoro_memory_gb`
+- Updated performance monitor targets from `orpheus_generation_ms` to `kokoro_generation_ms`
+
+### **Issue 2: Kokoro Model Download Problems**
+**Problem**: Kokoro TTS model files not properly downloaded or accessible.
+
+**Solution Implemented**:
+- **Created `KokoroModelManager`** (`src/utils/kokoro_model_manager.py`):
+  - Automatic model file detection and verification
+  - Downloads from HuggingFace repository `hexgrad/Kokoro-82M`
+  - Integrity checking with file size validation
+  - PyTorch file verification for voice files
+  - Comprehensive status reporting
+
+- **Updated `KokoroTTSModel`** to use model manager:
+  - Checks model availability before initialization
+  - Automatically downloads missing files
+  - Verifies model integrity
+
+### **Issue 3: Model Verification System**
+**Created comprehensive verification tools**:
+- **`verify_kokoro_model.py`**: Standalone verification script
+- **`fix_kokoro_issues.py`**: Comprehensive fix and test script
+
+## 🧪 **How to Fix and Test**
+
+### **Step 1: Run the Fix Script**
+```bash
+python fix_kokoro_issues.py
+```
+
+### **Step 2: Verify Model Installation**
+```bash
+python verify_kokoro_model.py
+```
+
+### **Step 3: Force Download if Needed**
+```bash
+python verify_kokoro_model.py --force-download
+```
+
+### **Step 4: Start the System**
+```bash
+python -m src.api.ui_server_realtime
+```
+
+## 📋 **Files Modified for Fixes**
+
+### **Memory Statistics Fixes**
+- `src/utils/gpu_memory_manager.py`: Updated all Orpheus references to Kokoro
+- `src/utils/performance_monitor.py`: Changed performance targets
+
+### **Model Download System**
+- `src/utils/kokoro_model_manager.py`: **NEW** - Complete model management
+- `src/models/kokoro_model_realtime.py`: Integrated model manager
+
+### **Verification Tools**
+- `verify_kokoro_model.py`: **NEW** - Standalone verification
+- `fix_kokoro_issues.py`: **NEW** - Comprehensive fix script
+
+## ✅ **Expected Results After Fixes**
+
+1. **No Memory Errors**: `kokoro_memory_gb` attribute properly available
+2. **Automatic Model Download**: Missing model files downloaded automatically
+3. **Model Verification**: All model files verified for integrity
+4. **Hindi Voice Support**: "ऋतिका" properly mapped to "hm_omega"
+5. **Clean Logs**: No Orpheus references, only Kokoro TTS messages
+
+The Voxtral-Final project now runs exclusively on Kokoro TTS with complete Orpheus removal and robust error handling! 🎊
