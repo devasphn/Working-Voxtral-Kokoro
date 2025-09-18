@@ -67,8 +67,8 @@ class UnifiedModelManager:
                 
                 # Step 2: Initialize models in optimal order (Voxtral first for memory layout)
                 await self._initialize_voxtral_model()
-                await self._initialize_orpheus_model()
-                
+                await self._initialize_tts_model()
+
                 # Step 3: Verify initialization and optimize memory
                 await self._post_initialization_optimization()
                 
@@ -143,37 +143,45 @@ class UnifiedModelManager:
             unified_logger.error(f"❌ Voxtral initialization failed: {e}")
             raise ModelInitializationError(f"Voxtral initialization failed: {e}")
     
-    async def _initialize_orpheus_model(self):
-        """Initialize Orpheus model with shared memory optimization"""
+    async def _initialize_tts_model(self):
+        """Initialize TTS model with Kokoro-primary, Orpheus-fallback hierarchy"""
         try:
-            unified_logger.info("🎵 Initializing Orpheus Direct model...")
+            unified_logger.info("🎵 Initializing TTS model with Kokoro-primary hierarchy...")
             start_time = time.time()
-            
-            # Create Orpheus model
+
+            # Create Orpheus Perfect Model (which handles Kokoro/Orpheus hierarchy internally)
             self.orpheus_model = OrpheusPerfectModel()
-            
+
             # Initialize with shared memory pool
             device = self.gpu_memory_manager.device
             shared_pool = self.gpu_memory_manager.memory_pool
-            
-            await self.orpheus_model.initialize(device=device, shared_memory_pool=shared_pool)
-            
+
+            success = await self.orpheus_model.initialize(device=device, shared_memory_pool=shared_pool)
+
+            if not success:
+                unified_logger.error("❌ TTS model initialization failed")
+                raise ModelInitializationError("TTS model initialization failed")
+
             # Track memory usage
             if self.gpu_memory_manager.device == "cuda":
                 total_memory = torch.cuda.memory_allocated() / (1024**3)
-                orpheus_memory = total_memory - self.memory_usage.get("voxtral_gb", 0)
-                self.gpu_memory_manager.track_model_memory("orpheus", orpheus_memory)
-                self.memory_usage["orpheus_gb"] = orpheus_memory
-            
+                tts_memory = total_memory - self.memory_usage.get("voxtral_gb", 0)
+                self.gpu_memory_manager.track_model_memory("orpheus", tts_memory)
+                self.memory_usage["orpheus_gb"] = tts_memory
+
+            # Check which TTS engine was actually initialized
+            model_info = self.orpheus_model.get_model_info()
+            tts_engine = model_info.get("tts_engine", "unknown")
+
             self.orpheus_initialized = True
             init_time = time.time() - start_time
             self.initialization_times["orpheus"] = init_time
-            
-            unified_logger.info(f"✅ Orpheus model initialized in {init_time:.2f}s")
-            
+
+            unified_logger.info(f"✅ TTS model initialized with {tts_engine} engine in {init_time:.2f}s")
+
         except Exception as e:
-            unified_logger.error(f"❌ Orpheus initialization failed: {e}")
-            raise ModelInitializationError(f"Orpheus initialization failed: {e}")
+            unified_logger.error(f"❌ TTS model initialization failed: {e}")
+            raise ModelInitializationError(f"TTS model initialization failed: {e}")
     
     async def _post_initialization_optimization(self):
         """Perform post-initialization memory optimization"""
@@ -212,12 +220,14 @@ class UnifiedModelManager:
                     raise ModelInitializationError("Voxtral model verification failed")
                 unified_logger.info("✅ Voxtral model verification passed")
             
-            # Test Orpheus model
+            # Test TTS model (Kokoro/Orpheus)
             if self.orpheus_model and self.orpheus_model.is_initialized:
                 model_info = self.orpheus_model.get_model_info()
                 if not model_info.get("is_initialized"):
-                    raise ModelInitializationError("Orpheus model verification failed")
-                unified_logger.info("✅ Orpheus model verification passed")
+                    raise ModelInitializationError("TTS model verification failed")
+
+                tts_engine = model_info.get("tts_engine", "unknown")
+                unified_logger.info(f"✅ TTS model verification passed (using {tts_engine} engine)")
             
             unified_logger.info("✅ All model functionality verified")
             

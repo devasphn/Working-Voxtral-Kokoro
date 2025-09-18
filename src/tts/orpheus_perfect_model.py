@@ -208,20 +208,20 @@ class OrpheusPerfectModel:
         """Get comprehensive model information"""
         if self.use_kokoro:
             base_info = {
-                "model_name": "Kokoro TTS (fallback)",
-                "status": "kokoro_fallback",
+                "model_name": "Kokoro TTS (primary)",
+                "status": "kokoro_primary",
                 "integration_type": "kokoro_tts"
             }
         elif self.streaming_model:
             base_info = self.streaming_model.get_model_info()
         else:
-            base_info = {"model_name": "not_initialized"}
+            base_info = {"model_name": "not_initialized", "status": "not_initialized"}
 
         # Add perfect model wrapper info
         perfect_info = {
             "wrapper_type": "OrpheusPerfectModel",
             "is_initialized": self.is_initialized,
-            "using_mock": self.use_mock,
+            "tts_engine": "kokoro" if self.use_kokoro else "orpheus" if self.streaming_model else "none",
             "generation_statistics": {
                 "total_generations": self.generation_count,
                 "average_generation_time_s": (
@@ -239,15 +239,19 @@ class OrpheusPerfectModel:
         """Cleanup model resources"""
         try:
             perfect_logger.info("🧹 Cleaning up OrpheusPerfectModel...")
-            
+
             # Cleanup the underlying models
             if self.streaming_model:
                 await self.streaming_model.cleanup()
-            if self.mock_model:
-                await self.mock_model.cleanup()
-            
+                self.streaming_model = None
+
+            if self.kokoro_model:
+                # Kokoro model doesn't have async cleanup, just clear reference
+                self.kokoro_model = None
+
             # Reset state
             self.is_initialized = False
+            self.use_kokoro = False
             self.generation_count = 0
             self.total_generation_time = 0.0
             self.last_generation_time = 0.0
