@@ -1,5 +1,5 @@
 """
-Comprehensive Error Handling System for Orpheus TTS Integration
+Comprehensive Error Handling System for Kokoro TTS Integration
 Centralized error handling, recovery mechanisms, and error analytics
 """
 

@@ -1,5 +1,5 @@
 """
-Performance Monitor for Orpheus TTS Integration
+Performance Monitor for Kokoro TTS Integration
 Real-time performance tracking and latency optimization
 """
 
@@ -21,7 +21,7 @@ class LatencyBreakdown:
     """Latency breakdown data structure"""
     voxtral_processing_ms: float
     text_generation_ms: float
-    orpheus_generation_ms: float
+    kokoro_generation_ms: float
     audio_conversion_ms: float
     total_latency_ms: float
     target_met: bool
@@ -146,7 +146,7 @@ class PerformanceMonitor:
             breakdown = LatencyBreakdown(
                 voxtral_processing_ms=components.get("voxtral_processing_ms", 0.0),
                 text_generation_ms=components.get("text_generation_ms", 0.0),
-                orpheus_generation_ms=components.get("orpheus_generation_ms", 0.0),
+                kokoro_generation_ms=components.get("kokoro_generation_ms", 0.0),
                 audio_conversion_ms=components.get("audio_conversion_ms", 0.0),
                 total_latency_ms=total_latency,
                 target_met=total_latency <= self.targets["total_end_to_end_ms"]
@@ -197,8 +197,8 @@ class PerformanceMonitor:
                     values = [op.total_latency_ms for op in recent_operations]
                 elif target_name == "voxtral_processing_ms":
                     values = [op.voxtral_processing_ms for op in recent_operations]
-                elif target_name == "orpheus_generation_ms":
-                    values = [op.orpheus_generation_ms for op in recent_operations]
+                elif target_name == "kokoro_generation_ms":
+                    values = [op.kokoro_generation_ms for op in recent_operations]
                 elif target_name == "audio_conversion_ms":
                     values = [op.audio_conversion_ms for op in recent_operations]
                 else:
@@ -277,10 +277,10 @@ class PerformanceMonitor:
                     f"(target: {self.targets['voxtral_processing_ms']}ms)"
                 )
             
-            if breakdown.orpheus_generation_ms > self.targets["orpheus_generation_ms"]:
+            if breakdown.kokoro_generation_ms > self.targets["kokoro_generation_ms"]:
                 perf_logger.warning(
-                    f"⚠️ Orpheus generation exceeded target: {breakdown.orpheus_generation_ms:.1f}ms "
-                    f"(target: {self.targets['orpheus_generation_ms']}ms)"
+                    f"⚠️ Kokoro generation exceeded target: {breakdown.kokoro_generation_ms:.1f}ms "
+                    f"(target: {self.targets['kokoro_generation_ms']}ms)"
                 )
             
         except Exception as e:
@@ -330,21 +330,21 @@ class PerformanceMonitor:
             
             # Analyze bottlenecks
             avg_voxtral = statistics.mean([op.voxtral_processing_ms for op in recent_ops])
-            avg_orpheus = statistics.mean([op.orpheus_generation_ms for op in recent_ops])
+            avg_kokoro = statistics.mean([op.kokoro_generation_ms for op in recent_ops])
             avg_conversion = statistics.mean([op.audio_conversion_ms for op in recent_ops])
-            
+
             # Voxtral optimization
             if avg_voxtral > self.targets["voxtral_processing_ms"]:
                 recommendations.append(
                     f"🎙️ Voxtral processing is slow ({avg_voxtral:.1f}ms avg). "
                     "Consider: reducing audio chunk size, optimizing VAD settings, or using faster GPU."
                 )
-            
-            # Orpheus optimization
-            if avg_orpheus > self.targets["orpheus_generation_ms"]:
+
+            # Kokoro optimization
+            if avg_kokoro > self.targets["kokoro_generation_ms"]:
                 recommendations.append(
-                    f"🎵 Orpheus generation is slow ({avg_orpheus:.1f}ms avg). "
-                    "Consider: reducing max_new_tokens, optimizing temperature/top_p, or using fp16 precision."
+                    f"🎵 Kokoro generation is slow ({avg_kokoro:.1f}ms avg). "
+                    "Consider: reducing voice complexity, optimizing speed settings, or using faster GPU."
                 )
             
             # Audio conversion optimization

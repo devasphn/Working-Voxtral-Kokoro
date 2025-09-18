@@ -89,7 +89,7 @@ class GPUMemoryManager:
                 )
             
             # Check if we have enough available memory for both models
-            required_memory_gb = self.voxtral_base_memory_gb + self.orpheus_base_memory_gb
+            required_memory_gb = self.voxtral_base_memory_gb + self.kokoro_base_memory_gb
             if available_memory_gb < required_memory_gb:
                 gpu_logger.warning(
                     f"⚠️ Limited available VRAM: {available_memory_gb:.2f} GB available, "

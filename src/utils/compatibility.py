@@ -66,9 +66,7 @@ def check_mistral_common():
     """Check if mistral-common is available"""
     return compat_manager.check_package("mistral-common", "mistral_common")
 
-def check_orpheus_tts():
-    """Check if orpheus-speech is available"""
-    return compat_manager.check_package("orpheus-speech", "orpheus_tts")
+# Orpheus TTS support removed - using Kokoro TTS only
 
 def check_pydantic_settings():
     """Check if pydantic-settings is available"""
@@ -97,30 +95,7 @@ class FallbackVoxtralModel:
     async def process_realtime_chunk(self, audio_data, chunk_id):
         raise MissingPackageError("Voxtral not available - please install transformers>=4.56.0")
 
-class FallbackOrpheusModel:
-    """Fallback implementation when Orpheus TTS is not available"""
-    
-    def __init__(self):
-        self.model_name = "orpheus-fallback"
-        self.is_initialized = False
-        compat_logger.warning("Using fallback Orpheus model - limited functionality")
-    
-    async def initialize(self):
-        compat_logger.warning("Orpheus TTS not available - using text-only mode")
-        return False
-    
-    async def generate_speech(self, text: str, voice: str = None) -> bytes:
-        raise MissingPackageError("Orpheus TTS not available - please install orpheus-speech")
-    
-    def get_available_voices(self) -> List[str]:
-        return ["fallback"]
-    
-    def get_model_info(self):
-        return {
-            "status": "fallback_mode",
-            "model_name": self.model_name,
-            "message": "Orpheus TTS not available - install orpheus-speech"
-        }
+# Orpheus TTS fallback model removed - using Kokoro TTS only
 
 class FallbackConfig:
     """Fallback configuration when pydantic-settings is not available"""
@@ -139,9 +114,9 @@ class FallbackConfig:
                 'max_context_length': 130072,
                 'torch_dtype': 'bfloat16'
             })(),
-            'orpheus': type('obj', (object,), {
-                'model_name': 'canopylabs/orpheus-tts-0.1-finetune-prod',
-                'default_voice': 'tara'
+            'kokoro': type('obj', (object,), {
+                'model_name': 'hexgrad/Kokoro-82M',
+                'default_voice': 'hm_omega'
             })()
         })()
         
@@ -252,8 +227,8 @@ def test_compatibility():
     fallback_voxtral = FallbackVoxtralModel()
     print(f"Fallback Voxtral: {fallback_voxtral.get_model_info()}")
     
-    fallback_orpheus = FallbackOrpheusModel()
-    print(f"Fallback Orpheus: {fallback_orpheus.get_model_info()}")
+    # Orpheus fallback removed - using Kokoro TTS only
+    print("Orpheus TTS support removed - using Kokoro TTS exclusively")
     
     fallback_config = FallbackConfig()
     print(f"Fallback Config: server.port = {fallback_config.server.port}")
