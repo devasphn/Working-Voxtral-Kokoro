@@ -125,7 +125,7 @@ class TTSConfig(BaseModel):
     sample_rate: int = 24000
     enabled: bool = True
     # Kokoro TTS fallback settings
-    voice: str = "default"  # Kokoro voice
+    voice: str = "af_heart"  # Kokoro voice (af_heart=Grade A American English female)
     speed: float = 1.0  # Kokoro speech speed
     lang_code: str = "a"  # Kokoro language code (a=American English, b=British English)
     orpheus_direct: TTSOrpheusDirectConfig = TTSOrpheusDirectConfig()
