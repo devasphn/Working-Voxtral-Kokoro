@@ -71,17 +71,18 @@ class OrpheusPerfectModel:
                 perfect_logger.info("🚀 Initializing OrpheusPerfectModel...")
                 start_time = time.time()
 
-                # Try to initialize the real Orpheus streaming model first
-                if ORPHEUS_STREAMING_AVAILABLE:
+                # Try to initialize Kokoro TTS first (primary due to storage constraints)
+                if KOKORO_AVAILABLE:
                     try:
-                        self.streaming_model = OrpheusStreamingModel()
-                        success = await self.streaming_model.initialize()
+                        perfect_logger.info("🎵 Initializing Kokoro TTS (primary)...")
+                        self.kokoro_model = KokoroTTSModel()
+                        success = await self.kokoro_model.initialize()
 
                         if success:
-                            self.use_mock = False
+                            self.use_kokoro = True
                             self.is_initialized = True
                             init_time = time.time() - start_time
-                            perfect_logger.info(f"🎉 OrpheusPerfectModel (real) initialized successfully in {init_time:.2f}s")
+                            perfect_logger.info(f"🎉 OrpheusPerfectModel (Kokoro primary) initialized successfully in {init_time:.2f}s")
 
                             # Log device and memory pool info if provided
                             if device:
@@ -91,26 +92,29 @@ class OrpheusPerfectModel:
 
                             return True
                         else:
-                            perfect_logger.warning("⚠️ Real Orpheus model failed, falling back to Kokoro TTS")
+                            perfect_logger.warning("⚠️ Kokoro TTS failed, falling back to Orpheus...")
                     except Exception as e:
-                        perfect_logger.warning(f"⚠️ Real Orpheus model error: {e}, falling back to Kokoro TTS")
+                        perfect_logger.warning(f"⚠️ Kokoro TTS error: {e}, falling back to Orpheus...")
 
-                # Fall back to Kokoro TTS service
-                if KOKORO_AVAILABLE:
-                    perfect_logger.info("🎵 Initializing Kokoro TTS fallback...")
-                    self.kokoro_model = KokoroTTSModel()
-                    success = await self.kokoro_model.initialize()
+                # Fall back to Orpheus streaming model (if storage allows)
+                if ORPHEUS_STREAMING_AVAILABLE:
+                    perfect_logger.info("🔄 Initializing Orpheus TTS fallback...")
+                    try:
+                        self.streaming_model = OrpheusStreamingModel()
+                        success = await self.streaming_model.initialize()
 
-                    if success:
-                        self.use_kokoro = True
-                        self.is_initialized = True
-                        init_time = time.time() - start_time
-                        perfect_logger.info(f"🎉 OrpheusPerfectModel (Kokoro) initialized successfully in {init_time:.2f}s")
-                        return True
-                    else:
-                        perfect_logger.error("❌ Both Orpheus and Kokoro TTS initialization failed")
+                        if success:
+                            self.use_kokoro = False
+                            self.is_initialized = True
+                            init_time = time.time() - start_time
+                            perfect_logger.info(f"🎉 OrpheusPerfectModel (Orpheus fallback) initialized successfully in {init_time:.2f}s")
+                            return True
+                        else:
+                            perfect_logger.error("❌ Both Kokoro and Orpheus TTS initialization failed")
+                    except Exception as e:
+                        perfect_logger.error(f"❌ Orpheus fallback error: {e}")
                 else:
-                    perfect_logger.error("❌ Orpheus failed and Kokoro TTS not available")
+                    perfect_logger.error("❌ Kokoro failed and Orpheus TTS not available")
                     return False
                     
         except Exception as e:
