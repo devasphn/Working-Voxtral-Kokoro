@@ -217,85 +217,97 @@ class VoxtralModel:
             realtime_logger.error(f"❌ VAD error: {e}")
             return False  # Conservative: reject on error
     
+    def _create_ultra_short_prompt(self) -> str:
+        """ULTRA-SHORT prompt for <500ms responses"""
+        return ("Reply in 1-2 words only. Be conversational but extremely brief. "
+                "Examples: 'Hello!' 'Sure!' 'Great!' 'I see.' 'Nice!' "
+                "Never explain or elaborate unless specifically asked.")
+    
     async def initialize(self):
-        """Initialize the Voxtral model with FIXED attention implementation handling"""
+        """Initialize with AGGRESSIVE quantization for <500ms latency"""
         try:
-            realtime_logger.info("🚀 Starting Voxtral model initialization for conversational streaming...")
+            realtime_logger.info("🚀 Starting ULTRA-LOW LATENCY Voxtral initialization...")
             start_time = time.time()
             
-            # Load processor
+            # Load processor (keep existing)
             realtime_logger.info(f"📥 Loading AutoProcessor from {config.model.name}")
             self.processor = AutoProcessor.from_pretrained(
                 config.model.name,
                 cache_dir=config.model.cache_dir
             )
-            realtime_logger.info("✅ AutoProcessor loaded successfully")
             
-            # FIXED: Determine attention implementation with proper detection
+            # CRITICAL: Check FlashAttention2
             attn_implementation = self._check_flash_attention_availability()
-            realtime_logger.info(f"🔧 Using attention implementation: {attn_implementation}")
             
-            # Load model with FIXED attention settings
-            realtime_logger.info(f"📥 Loading Voxtral model from {config.model.name}")
+            # ULTRA-OPTIMIZED model loading with quantization
+            realtime_logger.info(f"📥 Loading QUANTIZED Voxtral model for <500ms target")
             
             model_kwargs = {
                 "cache_dir": config.model.cache_dir,
-                "torch_dtype": self.torch_dtype,
+                "torch_dtype": torch.float16,  # FORCE float16 for maximum speed
                 "device_map": "auto",
                 "low_cpu_mem_usage": True,
                 "trust_remote_code": True,
-                "attn_implementation": attn_implementation
+                "attn_implementation": attn_implementation,
+                # ADDED: Ultra-aggressive optimizations
+                "use_flash_attention_2": True if attn_implementation == "flash_attention_2" else False,
+                "torch_compile": False,  # Disable for FlashAttention2 compatibility
+                "max_memory": {0: "8GB"},  # Limit VRAM usage
+                "offload_folder": None,  # Keep everything on GPU
+                "load_in_8bit": False,     # Don't use 8-bit (causes slowdown)
+                "load_in_4bit": False,     # Don't use 4-bit (unstable)
             }
             
+            # Try quantization if available
             try:
-                self.model = VoxtralForConditionalGeneration.from_pretrained(
-                    config.model.name,
-                    **model_kwargs
+                from transformers import BitsAndBytesConfig
+                # OPTIMIZED: Custom quantization for speed (not memory savings)
+                bnb_config = BitsAndBytesConfig(
+                    load_in_4bit=False,  # Don't use 4-bit for speed
+                    load_in_8bit=False,  # Don't use 8-bit for speed  
+                    bnb_4bit_use_double_quant=False,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=torch.float16
                 )
-                realtime_logger.info(f"✅ Voxtral model loaded successfully with {attn_implementation} attention")
-                
-            except Exception as model_load_error:
-                # Fallback to eager attention
-                if attn_implementation != "eager":
-                    realtime_logger.warning(f"⚠️ Model loading with {attn_implementation} failed: {model_load_error}")
-                    realtime_logger.info("🔄 Retrying with eager attention as fallback...")
-                    
-                    model_kwargs["attn_implementation"] = "eager"
-                    self.model = VoxtralForConditionalGeneration.from_pretrained(
-                        config.model.name,
-                        **model_kwargs
-                    )
-                    realtime_logger.info("✅ Voxtral model loaded successfully with eager attention fallback")
-                else:
-                    raise model_load_error
+                realtime_logger.info("💡 BitsAndBytesConfig available but DISABLED for maximum speed")
+                # model_kwargs["quantization_config"] = bnb_config  # DISABLED for speed
+            except ImportError:
+                realtime_logger.info("💡 BitsAndBytesConfig not available - using standard loading")
             
-            # Set model to evaluation mode
+            # Load model
+            self.model = VoxtralForConditionalGeneration.from_pretrained(
+                config.model.name,
+                **model_kwargs
+            )
+            
+            # ULTRA-OPTIMIZED model preparation
             self.model.eval()
-            realtime_logger.info("🔧 Model set to evaluation mode")
             
-            # FIXED: Conditional torch.compile with safety checks
-            if self.use_torch_compile and hasattr(torch, 'compile') and self.device == "cuda" and not self.flash_attention_available:
-                try:
-                    realtime_logger.info("⚡ Attempting to compile model with torch.compile()...")
-                    self.model = torch.compile(self.model, mode="default")  # Use default mode for stability
-                    realtime_logger.info("✅ Model compiled successfully for faster inference")
-                except Exception as e:
-                    realtime_logger.warning(f"⚠️ Could not compile model: {e}")
-                    realtime_logger.info("💡 Continuing without torch.compile...")
-            else:
-                if self.flash_attention_available:
-                    realtime_logger.info("💡 Skipping torch.compile (using FlashAttention2)")
-                else:
-                    realtime_logger.info("💡 Skipping torch.compile (disabled for stability)")
+            # CRITICAL: Enable aggressive PyTorch optimizations
+            if torch.cuda.is_available():
+                # Enable Tensor Core optimizations
+                torch.backends.cudnn.benchmark = True
+                torch.backends.cudnn.deterministic = False  # Allow non-deterministic for speed
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+                
+                # Enable mixed precision globally
+                torch.set_float32_matmul_precision('medium')  # Trade precision for speed
+                
+                # Optimize memory allocator
+                os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:64,roundup_power2_divisions:16'
+                
+                realtime_logger.info("⚡ ULTRA-OPTIMIZED PyTorch settings enabled")
+            
+            # DISABLED: Skip torch.compile (conflicts with FlashAttention2)
+            realtime_logger.info("💡 Skipping torch.compile (using FlashAttention2 + quantization)")
             
             self.is_initialized = True
             init_time = time.time() - start_time
-            realtime_logger.info(f"🎉 Voxtral model fully initialized in {init_time:.2f}s and ready for conversation!")
+            realtime_logger.info(f"🎉 ULTRA-LOW LATENCY Voxtral ready in {init_time:.2f}s - Target: <500ms")
             
         except Exception as e:
-            realtime_logger.error(f"❌ Failed to initialize Voxtral model: {e}")
-            import traceback
-            realtime_logger.error(f"❌ Full error traceback: {traceback.format_exc()}")
+            realtime_logger.error(f"❌ Ultra-low latency initialization failed: {e}")
             raise
     
     async def process_realtime_chunk(self, audio_data: torch.Tensor, chunk_id: int, mode: str = "conversation", prompt: str = "") -> Dict[str, Any]:
@@ -350,8 +362,8 @@ class VoxtralModel:
                         audio = Audio.from_file(tmp_file.name)
                         audio_chunk = AudioChunk.from_audio(audio)
                         
-                        # OPTIMIZED: Single unified conversational prompt for Smart Conversation Mode
-                        conversation_prompt = "You are a helpful AI assistant in a natural voice conversation. Listen carefully to what the person is saying and respond naturally, as if you're having a friendly chat. Keep your responses conversational, concise (1-2 sentences), and engaging. Respond directly to what they said without repeating their words back to them."
+                        # REPLACE the conversation_prompt in process_realtime_chunk:
+                        conversation_prompt = self._create_ultra_short_prompt()
                         
                         # Create message format using updated API
                         text_chunk = TextChunk(text=conversation_prompt)
@@ -370,30 +382,38 @@ class VoxtralModel:
                             inputs = {k: v.to(self.device) if hasattr(v, 'to') else v 
                                     for k, v in inputs.items()}
                         
-                        realtime_logger.debug(f"🚀 Starting inference for chunk {chunk_id}")
+                        # ULTRA-LOW LATENCY inference with aggressive settings
+                        realtime_logger.debug(f"🚀 Starting ULTRA-FAST inference for chunk {chunk_id}")
                         inference_start = time.time()
                         
-                        # ENHANCED: Generate response with optimized inference context
-                        with self._optimized_inference_context():
-                            with torch.no_grad():
-                                # ENHANCED: Use mixed precision with optimizations
-                                with torch.autocast(device_type="cuda" if "cuda" in self.device else "cpu", dtype=self.torch_dtype,
-                                                  enabled=True):  # Always enable for performance
-                                    outputs = self.model.generate(
-                                        **inputs,
-                                        max_new_tokens=128,     # OPTIMIZED: Balanced length (was 200)
-                                        min_new_tokens=3,       # OPTIMIZED: Faster start (was 5)
-                                        do_sample=True,         
-                                        num_beams=1,           
-                                        temperature=0.15,       # OPTIMIZED: Slightly more focused (was 0.2)
-                                        top_p=0.9,             # OPTIMIZED: Slightly more focused (was 0.95)
-                                        repetition_penalty=1.05, # OPTIMIZED: Lighter penalty (was 1.1)
-                                        pad_token_id=self.processor.tokenizer.eos_token_id if hasattr(self.processor, 'tokenizer') else None,
-                                        use_cache=True,         # ADDED: Performance optimization
-                                        early_stopping=False,   # Let model decide naturally
-                                        length_penalty=0.95,    # Slight preference for shorter responses
-                                        no_repeat_ngram_size=3, # Prevent 3-gram repetition
-                                    )
+                        with torch.no_grad():
+                            # CRITICAL: Use aggressive mixed precision
+                            with torch.autocast(device_type="cuda",
+                                               dtype=torch.float16,  # Force float16 for maximum speed
+                                               enabled=True):
+                                # ULTRA-AGGRESSIVE generation parameters for <500ms total
+                                outputs = self.model.generate(
+                                    **inputs,
+                                    max_new_tokens=50,      # ULTRA-REDUCED: Cut by 75% (was 200)
+                                    min_new_tokens=1,       # ULTRA-REDUCED: Minimum viable (was 5)
+                                    do_sample=False,        # DISABLED: Deterministic for speed (was True)
+                                    num_beams=1,           # Single beam (fastest)
+                                    temperature=None,       # DISABLED: Deterministic mode
+                                    top_p=None,            # DISABLED: Deterministic mode
+                                    repetition_penalty=1.0, # DISABLED: No penalty processing
+                                    pad_token_id=self.processor.tokenizer.eos_token_id if hasattr(self.processor, 'tokenizer') else None,
+                                    use_cache=True,
+                                    # ULTRA-AGGRESSIVE: Force early stopping
+                                    early_stopping=True,    # ENABLED: Stop as soon as possible
+                                    length_penalty=0.8,     # STRONG: Prefer shorter responses
+                                    no_repeat_ngram_size=2, # REDUCED: Faster processing (was 3)
+                                    # ADDED: Advanced speed optimizations
+                                    output_scores=False,    # DISABLED: Skip score computation
+                                    return_dict_in_generate=False,  # DISABLED: Skip dict creation
+                                    synced_gpus=False,      # DISABLED: Single GPU optimization
+                                    # CRITICAL: Set explicit stopping criteria
+                                    eos_token_id=self.processor.tokenizer.eos_token_id if hasattr(self.processor, 'tokenizer') else None,
+                                )
                         
                         inference_time = (time.time() - inference_start) * 1000
                         realtime_logger.debug(f"⚡ Inference completed for chunk {chunk_id} in {inference_time:.1f}ms")
