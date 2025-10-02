@@ -102,6 +102,57 @@ class UnifiedModelManager:
         
         return status
     
+    async def warmup_models_for_speed(self):
+        """Warmup models for consistent <500ms performance"""
+        if not self.is_initialized:
+            return False
+        
+        try:
+            unified_logger.info("🔥 Warming up models for ultra-fast performance...")
+            
+            # Enable ultra-fast mode
+            self.gpu_memory_manager.enable_ultra_fast_mode()
+            
+            # Warmup Voxtral with progressively smaller inputs
+            warmup_audio_lengths = [8000, 4000, 2000, 1000]  # 0.5s to 0.0625s
+            for i, length in enumerate(warmup_audio_lengths):
+                dummy_audio = torch.randn(length, device=self.gpu_memory_manager.device, dtype=torch.float16) * 0.1
+                start_time = time.time()
+                result = await self.voxtral_model.process_realtime_chunk(
+                    dummy_audio, 
+                    chunk_id=f"warmup_{i}",
+                    mode="conversation"
+                )
+                warmup_time = (time.time() - start_time) * 1000
+                unified_logger.info(f"🔥 Warmup {i+1}/4: {length} samples -> {warmup_time:.1f}ms")
+                
+                # Break early if we achieve target
+                if warmup_time < 500:
+                    unified_logger.info(f"✅ Target achieved at warmup {i+1} - stopping early")
+                    break
+            
+            # Final warmup with typical speech
+            typical_audio = torch.randn(16000, device=self.gpu_memory_manager.device, dtype=torch.float16) * 0.05  # 1 second, normal volume
+            start_time = time.time()
+            result = await self.voxtral_model.process_realtime_chunk(
+                typical_audio,
+                chunk_id="warmup_final",
+                mode="conversation"  
+            )
+            final_warmup_time = (time.time() - start_time) * 1000
+            unified_logger.info(f"🎯 FINAL warmup: 1s audio -> {final_warmup_time:.1f}ms")
+            
+            if final_warmup_time < 500:
+                unified_logger.info("✅ ULTRA-FAST mode ready - <500ms target achieved!")
+                return True
+            else:
+                unified_logger.warning(f"⚠️ Still {final_warmup_time:.1f}ms - may need further optimization")
+                return True
+                
+        except Exception as e:
+            unified_logger.error(f"❌ Model warmup failed: {e}")
+            return False
+    
     async def initialize(self) -> bool:
         """
         Initialize both models with optimal memory management

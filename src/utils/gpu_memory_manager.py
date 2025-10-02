@@ -349,6 +349,45 @@ class GPUMemoryManager:
         except Exception as e:
             gpu_logger.error(f"❌ Memory monitoring failed: {e}")
             return {"status": "error", "error": str(e)}
+    
+    def enable_ultra_fast_mode(self):
+        """Enable ultra-fast mode for <500ms latency"""
+        if not torch.cuda.is_available():
+            return False
+        
+        try:
+            # ULTRA-AGGRESSIVE GPU settings
+            torch.cuda.set_per_process_memory_fraction(0.95)  # Use 95% VRAM
+            
+            # Enable all possible speed optimizations  
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cudnn.deterministic = False
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            
+            # Force GPU memory pre-allocation
+            dummy_tensor = torch.randn(1000, 1000, device='cuda', dtype=torch.float16)
+            del dummy_tensor
+            torch.cuda.empty_cache()
+            
+            # Set optimal thread counts
+            torch.set_num_threads(min(4, torch.get_num_threads()))
+            
+            # Enable optimized CUDA kernels
+            import os
+            os.environ.update({
+                'CUDA_LAUNCH_BLOCKING': '0',
+                'PYTORCH_CUDA_ALLOC_CONF': 'max_split_size_mb:32',
+                'TORCH_CUDNN_V8_API_ENABLED': '1',
+                'NVIDIA_TF32_OVERRIDE': '1'
+            })
+            
+            gpu_logger.info("🚀 ULTRA-FAST mode enabled - targeting <500ms latency")
+            return True
+            
+        except Exception as e:
+            gpu_logger.error(f"Failed to enable ultra-fast mode: {e}")
+            return False
 
 # Global memory manager instance
 gpu_memory_manager = GPUMemoryManager()

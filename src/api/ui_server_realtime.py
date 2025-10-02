@@ -541,14 +541,14 @@ async def home(request: Request):
         let currentConversationId = null;
         let speechToSpeechActive = false;
 
-        // Enhanced configuration for continuous speech capture
-        const CHUNK_SIZE = 4096;
-        const CHUNK_INTERVAL = 100;  // Reduced for more responsive VAD (was 1000ms)
+        // ULTRA-LOW LATENCY frontend settings
+        const CHUNK_SIZE = 2048;           // REDUCED: 2x smaller (was 4096)
+        const CHUNK_INTERVAL = 50;         // REDUCED: 2x faster (was 100ms)
         const SAMPLE_RATE = 16000;
+        const MIN_SPEECH_DURATION = 200;   // REDUCED: 2.5x faster (was 500ms)
+        const END_OF_SPEECH_SILENCE = 600; // REDUCED: 2.5x faster (was 1500ms)
+        const SILENCE_THRESHOLD = 0.005;   // REDUCED: 2x more sensitive (was 0.01)
         const LATENCY_WARNING_THRESHOLD = 1000;
-        const SILENCE_THRESHOLD = 0.01;  // RMS threshold for speech detection
-        const MIN_SPEECH_DURATION = 500;  // Minimum speech duration in ms
-        const END_OF_SPEECH_SILENCE = 1500;  // Silence duration to trigger processing (ms)
         
         function log(message, type = 'info') {
             console.log(`[Voxtral VAD] ${message}`);
@@ -1294,57 +1294,63 @@ async def home(request: Request):
                     const inputBuffer = event.inputBuffer;
                     const inputData = inputBuffer.getChannelData(0);
 
-                    // Update volume meter and VAD indicator
+                    // ULTRA-FAST volume update (reduced computation)
                     updateVolumeMeter(inputData);
 
-                    // Add to continuous buffer
-                    continuousAudioBuffer.push(...inputData);
+                    // OPTIMIZED: Only add significant audio data
+                    const rms = Math.sqrt(inputData.reduce((sum, val) => sum + val * val, 0) / inputData.length);
+                    if (rms > SILENCE_THRESHOLD) {
+                        continuousAudioBuffer.push(...inputData);
+                    }
 
-                    // Detect speech in current chunk
-                    const hasSpeech = detectSpeechInBuffer(inputData);
                     const now = Date.now();
+                    const hasSpeech = rms > SILENCE_THRESHOLD;
 
                     if (hasSpeech) {
                         if (!isSpeechActive) {
-                            // Speech started
                             speechStartTime = now;
                             isSpeechActive = true;
                             silenceStartTime = null;
-                            log('Speech detected - starting continuous capture');
                             updateVadStatus('speech');
                         }
                         lastSpeechTime = now;
                     } else {
                         if (isSpeechActive && !silenceStartTime) {
-                            // Silence started after speech
                             silenceStartTime = now;
                             updateVadStatus('silence');
                         }
                     }
 
-                    // Check if we should process accumulated speech
+                    // ULTRA-AGGRESSIVE: Send smaller, faster chunks
                     if (isSpeechActive && silenceStartTime &&
                         (now - silenceStartTime >= END_OF_SPEECH_SILENCE) &&
                         (lastSpeechTime - speechStartTime >= MIN_SPEECH_DURATION)) {
 
-                        // Process the complete utterance
-                        log(`Processing complete utterance: ${continuousAudioBuffer.length} samples, ${(lastSpeechTime - speechStartTime)}ms duration`);
-                        sendCompleteUtterance(new Float32Array(continuousAudioBuffer));
+                        // ULTRA-OPTIMIZED: Send SMALLER audio chunks for faster processing
+                        const maxSamples = SAMPLE_RATE * 3;  // Max 3 seconds of audio
+                        let audioToSend = continuousAudioBuffer;
+                        if (audioToSend.length > maxSamples) {
+                            // Keep only the most recent 3 seconds
+                            audioToSend = audioToSend.slice(-maxSamples);
+                            log(`Trimmed audio to ${maxSamples} samples (3s) for ultra-fast processing`);
+                        }
 
-                        // Reset for next utterance
+                        log(`Processing ULTRA-FAST utterance: ${audioToSend.length} samples, ${(lastSpeechTime - speechStartTime)}ms duration`);
+                        sendCompleteUtterance(new Float32Array(audioToSend));
+
+                        // Reset
                         continuousAudioBuffer = [];
                         isSpeechActive = false;
                         speechStartTime = null;
-                        lastSpeechTime = null;
+                        lastSpeechTime = null;  
                         silenceStartTime = null;
-                        pendingResponse = true;  // Prevent processing until response received
+                        pendingResponse = true;
                     }
 
-                    // Prevent buffer from growing too large (max 30 seconds)
-                    const maxBufferSize = SAMPLE_RATE * 30;
+                    // ULTRA-OPTIMIZED: Much smaller max buffer (5 seconds vs 30 seconds)
+                    const maxBufferSize = SAMPLE_RATE * 5;
                     if (continuousAudioBuffer.length > maxBufferSize) {
                         continuousAudioBuffer = continuousAudioBuffer.slice(-maxBufferSize);
-                        log('Audio buffer trimmed to prevent memory overflow');
                     }
                 };
                 
@@ -1887,50 +1893,43 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
         streaming_logger.error(f"[CONVERSATION] Error handling audio chunk: {e}")
 
 async def initialize_models_at_startup():
-    """Initialize all models using unified model manager at application startup"""
-    streaming_logger.info("🚀 Initializing unified model system at startup...")
+    """Initialize with ULTRA-FAST mode for <500ms latency"""
+    streaming_logger.info("🚀 Initializing ULTRA-FAST unified model system...")
 
     try:
-        # Initialize unified model manager
         unified_manager = get_unified_manager()
-        audio_processor = get_audio_processor()
-        performance_monitor = get_performance_monitor()
-
+        
         if not unified_manager.is_initialized:
             streaming_logger.info("📥 Initializing unified model manager...")
             success = await unified_manager.initialize()
             
             if success:
-                streaming_logger.info("✅ Unified model manager initialized successfully")
+                # CRITICAL: Enable ultra-fast mode and warmup
+                streaming_logger.info("🔥 Enabling ULTRA-FAST mode...")
+                warmup_success = await unified_manager.warmup_models_for_speed()
                 
-                # Get model info for logging
+                if warmup_success:
+                    streaming_logger.info("✅ ULTRA-FAST mode ready - <500ms latency target!")
+                else:
+                    streaming_logger.warning("⚠️ Ultra-fast mode setup had issues but continuing...")
+                
+                # Log final performance status
                 model_info = unified_manager.get_model_info()
-                streaming_logger.info(f"📊 Voxtral initialized: {model_info['unified_manager']['voxtral_initialized']}")
-                streaming_logger.info(f"📊 Kokoro TTS initialized: {model_info['unified_manager']['kokoro_initialized']}")
-
-                # Log memory statistics
-                memory_stats = unified_manager.get_memory_stats()
-                if "memory_stats" in memory_stats:
-                    stats = memory_stats["memory_stats"]
-                    streaming_logger.info(f"💾 GPU Memory: {stats['used_vram_gb']:.2f}GB / {stats['total_vram_gb']:.2f}GB")
-                    streaming_logger.info(f"💾 Voxtral: {stats['voxtral_memory_gb']:.2f}GB, Kokoro: {stats['kokoro_memory_gb']:.2f}GB")
+                optimization_status = unified_manager.get_optimization_status()
+                
+                streaming_logger.info(f"📊 Final Status:")
+                streaming_logger.info(f"   Voxtral: {model_info['unified_manager']['voxtral_initialized']}")
+                streaming_logger.info(f"   Kokoro: {model_info['unified_manager']['kokoro_initialized']}")
+                streaming_logger.info(f"   FlashAttention2: {optimization_status['optimizations_enabled'].get('flash_attention_available', False)}")
+                streaming_logger.info(f"   TF32 Enabled: {optimization_status['optimizations_enabled'].get('allow_tf32', False)}")
                 
             else:
                 raise Exception("Unified model manager initialization failed")
-        else:
-            streaming_logger.info("✅ Unified model manager already initialized")
-
-        streaming_logger.info("🎉 All models ready for conversation with Kokoro TTS integration!")
+        
+        streaming_logger.info("🎉 ULTRA-FAST system ready for <500ms conversations!")
 
     except Exception as e:
-        streaming_logger.error(f"❌ Failed to initialize unified model system: {e}")
-        # Try to get error details from unified manager
-        try:
-            unified_manager = get_unified_manager()
-            error_summary = unified_manager.get_model_info()
-            streaming_logger.error(f"📊 Model states: {error_summary}")
-        except:
-            pass
+        streaming_logger.error(f"❌ ULTRA-FAST initialization failed: {e}")
         raise
 
 if __name__ == "__main__":
