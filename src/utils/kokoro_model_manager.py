@@ -44,7 +44,6 @@ class KokoroModelManager:
             "voices/af_sarah.pt": "voices/af_sarah.pt",
             "voices/hf_alpha.pt": "voices/hf_alpha.pt",
             "voices/hf_beta.pt": "voices/hf_beta.pt",
-            "voices/hm_omega.pt": "voices/hm_omega.pt",
             "voices/hm_psi.pt": "voices/hm_psi.pt"
         }
         
@@ -57,7 +56,6 @@ class KokoroModelManager:
             "voices/af_sarah.pt": 500_000,  # ~500KB
             "voices/hf_alpha.pt": 500_000,  # ~500KB
             "voices/hf_beta.pt": 500_000,  # ~500KB
-            "voices/hm_omega.pt": 500_000,  # ~500KB
             "voices/hm_psi.pt": 500_000,  # ~500KB
         }
 

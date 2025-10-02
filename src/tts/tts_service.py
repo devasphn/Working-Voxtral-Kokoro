@@ -21,11 +21,11 @@ tts_service_logger.setLevel(logging.INFO)
 def map_voice_to_kokoro(voice_name: str) -> str:
     """Map voice requests to appropriate Kokoro voices"""
     if voice_name in ["ऋतिका", "ritika"]:
-        return "hm_omega"  # Hindi male voice
+        return "hf_alpha"  # Hindi female voice (Heart - Calm & Friendly)
     elif voice_name in ["hindi", "हिंदी"]:
-        return "hm_omega"  # Default Hindi voice
-    # Default to English female voice for unknown voices
-    return "af_heart"
+        return "hf_alpha"  # Default Hindi voice
+    # Default to Heart voice for unknown voices
+    return "hf_alpha"
 
 class TTSService:
     """
@@ -38,7 +38,7 @@ class TTSService:
         self.is_initialized = False
 
         # Configuration from config file
-        self.default_voice = "hm_omega"  # Use Kokoro Hindi voice instead of ऋतिका
+        self.default_voice = "hf_alpha"  # Use Kokoro Heart voice as default
         self.sample_rate = config.tts.sample_rate
         self.enabled = config.tts.enabled
 
@@ -189,7 +189,7 @@ class TTSService:
     def get_available_voices(self) -> List[str]:
         """Get list of available voices"""
         # Return Kokoro voices
-        return ["af_heart", "af_bella", "af_nicole", "af_sarah", "hm_omega", "hf_alpha", "hf_beta", "hm_psi"]
+        return ["hf_alpha", "af_bella", "af_nicole", "af_sarah", "af_heart", "hf_beta", "hm_psi"]
 
     def get_service_info(self) -> Dict[str, Any]:
         """Get TTS service information and statistics"""

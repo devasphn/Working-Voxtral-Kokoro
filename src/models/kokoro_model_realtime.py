@@ -24,6 +24,8 @@ class KokoroTTSModel:
     Follows the same patterns as VoxtralModel for consistency
     """
     
+    DEFAULT_VOICE = "hf_alpha"
+    
     def __init__(self):
         self.pipeline = None
         self.model_lock = Lock()
@@ -39,7 +41,7 @@ class KokoroTTSModel:
         
         # TTS-specific settings
         self.sample_rate = config.tts.sample_rate
-        self.voice = config.tts.voice
+        self.voice = getattr(config.tts, 'voice', self.DEFAULT_VOICE) or self.DEFAULT_VOICE
         self.speed = config.tts.speed
         self.lang_code = config.tts.lang_code
         
@@ -136,7 +138,7 @@ class KokoroTTSModel:
         chunk_id = chunk_id or f"tts_{int(time.time() * 1000)}"
         
         # Use provided parameters or defaults
-        voice = voice or self.voice
+        voice = voice or self.voice or self.DEFAULT_VOICE
         speed = speed or self.speed
         
         try:
@@ -239,7 +241,7 @@ class KokoroTTSModel:
         """Get list of available voices"""
         # Common Kokoro voices - this could be expanded based on the model
         return [
-            'af_heart', 'af_bella', 'af_sarah', 'af_nicole', 'af_sky',
+            'hf_alpha', 'af_bella', 'af_sarah', 'af_nicole', 'af_sky',
             'am_adam', 'am_michael', 'am_edward', 'am_lewis', 'am_william'
         ]
     

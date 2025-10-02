@@ -388,8 +388,8 @@ async def home(request: Request):
                     <div>
                         <label>Voice:</label>
                         <select id="voiceSelect" onchange="updateVoiceSettings()">
+                            <option value="hf_alpha" selected>Heart (Calm & Friendly)</option>
                             <option value="auto">🎭 Auto (Emotional)</option>
-                            <option value="af_heart">Heart (Calm & Friendly)</option>
                             <option value="af_bella">Bella (Energetic & Excited)</option>
                             <option value="af_sarah">Sarah (Gentle & Empathetic)</option>
                             <option value="af_nicole">Nicole (Professional)</option>
@@ -536,7 +536,7 @@ async def home(request: Request):
         
         // Speech-to-Speech specific variables
         let currentMode = 'transcribe';
-        let selectedVoice = 'af_heart';
+        let selectedVoice = 'hf_alpha';
         let selectedSpeed = 1.0;
         let currentConversationId = null;
         let speechToSpeechActive = false;
@@ -1770,13 +1770,13 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
                             tts_timing_id = performance_monitor.start_timing("kokoro_generation", {
                                 "chunk_id": chunk_id,
                                 "text_length": len(response),
-                                "voice": "hm_omega"  # Kokoro Hindi voice
+                                "voice": "hf_alpha"  # Heart (Calm & Friendly) voice
                             })
 
                             # Generate speech using Kokoro TTS model
                             result = await kokoro_model.synthesize_speech(
                                 text=response,
-                                voice="hm_omega"  # Use Kokoro Hindi voice instead of ऋतिका
+                                voice="hf_alpha"  # Use Heart (Calm & Friendly) voice as default
                             )
 
                             if not result.get("success", False):
@@ -1838,7 +1838,7 @@ async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, cl
                                     "type": "audio_response",
                                     "audio_data": audio_b64,
                                     "chunk_id": chunk_id,
-                                    "voice": "hm_omega",  # Kokoro Hindi voice
+                                    "voice": "hf_alpha",  # Heart (Calm & Friendly) voice
                                     "format": "wav",
                                     "metadata": {
                                         "audio_duration_ms": audio_duration_ms,

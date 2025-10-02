@@ -78,7 +78,7 @@ class LoggingConfig(BaseModel):
 
 class TTSVoicesConfig(BaseModel):
     english: List[str] = ["af_heart", "af_bella", "af_nicole", "af_sarah"]  # Kokoro English voices
-    hindi: List[str] = ["hm_omega", "hf_alpha", "hf_beta", "hm_psi"]  # Kokoro Hindi voices
+    hindi: List[str] = ["hf_alpha", "hf_beta", "hm_psi"]  # Kokoro Hindi voices
 
 # Orpheus configuration classes removed - using Kokoro TTS only
 
@@ -100,11 +100,11 @@ class GPUMemoryConfig(BaseModel):
 
 class TTSConfig(BaseModel):
     engine: str = "kokoro"  # Changed to Kokoro TTS only
-    default_voice: str = "hm_omega"  # Kokoro Hindi voice (replaces ऋतिका)
+    default_voice: str = "hf_alpha"  # Kokoro Hindi voice (Heart - Calm & Friendly)
     sample_rate: int = 24000
     enabled: bool = True
     # Kokoro TTS settings
-    voice: str = "hm_omega"  # Kokoro Hindi voice
+    voice: str = "hf_alpha"  # Kokoro Hindi voice (Heart - Calm & Friendly)
     speed: float = 1.0  # Kokoro speech speed
     lang_code: str = "h"  # Kokoro language code (h=Hindi, a=American English, b=British English)
     voices: TTSVoicesConfig = TTSVoicesConfig()

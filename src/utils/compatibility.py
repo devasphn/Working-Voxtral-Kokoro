@@ -116,7 +116,7 @@ class FallbackConfig:
             })(),
             'kokoro': type('obj', (object,), {
                 'model_name': 'hexgrad/Kokoro-82M',
-                'default_voice': 'hm_omega'
+                'default_voice': 'hf_alpha'
             })()
         })()
         

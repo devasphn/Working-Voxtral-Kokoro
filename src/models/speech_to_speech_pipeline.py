@@ -19,6 +19,14 @@ from src.utils.config import config
 # Setup logging
 pipeline_logger = logging.getLogger("speech_to_speech")
 
+# Default TTS configuration
+DEFAULT_TTS_CONFIG = {
+    'voice': 'hf_alpha',        # Updated from 'hm_omega'
+    'speed': 1.0,
+    'lang': 'h',
+    'sample_rate': 24000
+}
+
 class SpeechToSpeechPipeline:
     """
     Production-ready Speech-to-Speech Pipeline
@@ -304,7 +312,7 @@ class SpeechToSpeechPipeline:
             return self._get_voice_for_emotion(emotion)
 
         # Default voice
-        return kokoro_model.voice
+        return DEFAULT_TTS_CONFIG['voice']
 
     def _detect_emotion_in_text(self, text: str) -> str:
         """
@@ -357,11 +365,11 @@ class SpeechToSpeechPipeline:
             'happy': 'af_sky',          # Bright female voice
             'empathetic': 'af_sarah',   # Gentle, caring female voice
             'professional': 'af_nicole', # Professional female voice
-            'calm': 'af_heart',         # Calm, soothing female voice
-            'friendly': 'af_heart',     # Default friendly voice
+            'calm': 'hf_alpha',         # Calm, soothing female voice
+            'friendly': 'hf_alpha',     # Default friendly voice
         }
 
-        return emotion_voice_map.get(emotion, kokoro_model.voice)
+        return emotion_voice_map.get(emotion, DEFAULT_TTS_CONFIG['voice'])
     
     def _select_speed_for_response(self, response_text: str) -> float:
         """Select appropriate speech speed based on response content and emotional context"""
@@ -370,11 +378,11 @@ class SpeechToSpeechPipeline:
             return self._get_speed_for_emotion(emotion, response_text)
 
         # Default speed
-        return kokoro_model.speed
+        return DEFAULT_TTS_CONFIG['speed']
 
     def _get_speed_for_emotion(self, emotion: str, text: str) -> float:
         """Map emotions and content to appropriate speech speeds"""
-        base_speed = kokoro_model.speed
+        base_speed = DEFAULT_TTS_CONFIG['speed']
         text_lower = text.lower()
 
         # Emotion-based speed adjustments

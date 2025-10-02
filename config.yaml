@@ -37,17 +37,17 @@ streaming:
 # TTS (Text-to-Speech) configuration - Kokoro TTS
 tts:
   engine: "kokoro"
-  default_voice: "hm_omega"  # Kokoro Hindi voice (replaces ऋतिका)
+  default_voice: "hf_alpha"  # Kokoro Hindi voice (Heart - Calm & Friendly)
   sample_rate: 24000
   enabled: true
   # Kokoro TTS settings
-  voice: "hm_omega"  # Kokoro Hindi voice
+  voice: "hf_alpha"  # Kokoro Hindi voice (Heart - Calm & Friendly)
   speed: 1.0  # Kokoro speech speed
   lang_code: "h"  # Kokoro language code (h=Hindi, a=American English, b=British English)
   # Available voices by language - Kokoro voices only
   voices:
     english: ["af_heart", "af_bella", "af_nicole", "af_sarah"]  # Kokoro English voices
-    hindi: ["hm_omega", "hf_alpha", "hf_beta", "hm_psi"]  # Kokoro Hindi voices
+    hindi: ["hf_alpha", "hf_beta", "hm_psi"]  # Kokoro Hindi voices
   # Performance settings
   performance:
     batch_size: 1  # Direct integration uses batch_size=1
