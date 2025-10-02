@@ -6,6 +6,9 @@ import torch
 import asyncio
 import time
 from typing import Optional, List, Dict, Any
+# ADD these imports at the top
+import gc
+from contextlib import contextmanager
 # Import with compatibility layer
 try:
     from transformers import VoxtralForConditionalGeneration, AutoProcessor
@@ -74,16 +77,37 @@ class VoxtralModel:
         self.device = config.model.device
         self.torch_dtype = getattr(torch, config.model.torch_dtype)
         
-        # CALIBRATED VAD and silence detection settings - Perfectly aligned with AudioProcessor
-        self.silence_threshold = 0.015  # Aligned with AudioProcessor threshold for perfect compatibility
-        self.min_speech_duration = 0.4  # Aligned with AudioProcessor minimum duration (400ms)
-        self.max_silence_duration = 1.2  # Aligned with AudioProcessor silence duration (1200ms)
+        # ENHANCED VAD settings aligned with config.yaml
+        self.silence_threshold = getattr(config.vad, 'threshold', 0.010)
+        self.min_speech_duration = getattr(config.vad, 'min_voice_duration_ms', 300) / 1000  # Convert to seconds
+        self.max_silence_duration = getattr(config.vad, 'min_silence_duration_ms', 800) / 1000
+        self.vad_sensitivity = getattr(config.vad, 'sensitivity', 'balanced')
+        
+        # ADDED: Advanced VAD parameters
+        self.spectral_rolloff_threshold = 0.85  # For speech quality detection
+        self.zero_crossing_rate_threshold = 0.1  # For voiced/unvoiced detection
         
         # Performance optimization flags
         self.use_torch_compile = False  # Disabled by default for stability
         self.flash_attention_available = False
         
         realtime_logger.info(f"VoxtralModel initialized for {self.device} with {self.torch_dtype}")
+    
+    @contextmanager
+    def _optimized_inference_context(self):
+        """Context manager for optimized inference"""
+        try:
+            # Enable optimized memory usage
+            torch.backends.cudnn.benchmark = True
+            if hasattr(torch.backends.cudnn, 'allow_tf32'):
+                torch.backends.cudnn.allow_tf32 = True
+            if hasattr(torch.backends.cuda, 'matmul'):
+                torch.backends.cuda.matmul.allow_tf32 = True
+            yield
+        finally:
+            # Cleanup after inference
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         
     def get_audio_processor(self):
         """Lazy initialization of Audio processor"""
@@ -94,37 +118,38 @@ class VoxtralModel:
         return self.audio_processor
     
     def _check_flash_attention_availability(self):
-        """
-        FIXED: Properly detect FlashAttention2 availability
-        """
+        """ENHANCED: Detect and optimize FlashAttention2"""
         try:
             import flash_attn
             from flash_attn import flash_attn_func
-            
-            # Test if we can actually use it
             if self.device == "cuda" and torch.cuda.is_available():
-                # Try to get GPU compute capability
+                # Get GPU info
                 gpu_capability = torch.cuda.get_device_capability()
                 major, minor = gpu_capability
+                gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
                 
-                # FlashAttention2 requires compute capability >= 8.0 for optimal performance
-                if major >= 8:
+                # Enhanced FlashAttention support detection
+                if major >= 8:  # Ampere and newer
                     self.flash_attention_available = True
-                    realtime_logger.info(f"✅ FlashAttention2 available - GPU compute capability: {major}.{minor}")
+                    realtime_logger.info(f"✅ FlashAttention2 OPTIMIZED - GPU: {major}.{minor}, Memory: {gpu_memory:.1f}GB")
+                    # Enable additional optimizations for FlashAttention2
+                    os.environ['FLASH_ATTENTION_SKIP_CUDA_CHECK'] = '1'
                     return "flash_attention_2"
+                elif major >= 7:  # Turing
+                    realtime_logger.info(f"💡 FlashAttention2 available but not optimal for SM{major}.{minor}")
+                    return "flash_attention_2"  # Still use it
                 else:
-                    realtime_logger.info(f"💡 FlashAttention2 available but GPU compute capability ({major}.{minor}) < 8.0, using eager attention")
+                    realtime_logger.info(f"⚠️ GPU compute capability {major}.{minor} < 7.0, using eager attention")
                     return "eager"
             else:
-                realtime_logger.info("💡 FlashAttention2 available but CUDA not available, using eager attention")
+                realtime_logger.info("💡 CUDA not available, using eager attention")
                 return "eager"
-                
         except ImportError:
-            realtime_logger.info("💡 FlashAttention2 not installed, using eager attention")
-            realtime_logger.info("💡 To install: pip install flash-attn --no-build-isolation")
+            realtime_logger.warning("⚠️ FlashAttention2 not installed!")
+            realtime_logger.info("🚀 INSTALL: pip install flash-attn --no-build-isolation")
             return "eager"
         except Exception as e:
-            realtime_logger.warning(f"⚠️ FlashAttention2 check failed: {e}, using eager attention")
+            realtime_logger.error(f"❌ FlashAttention2 check failed: {e}")
             return "eager"
     
     def _calculate_audio_energy(self, audio_data: np.ndarray) -> float:
@@ -140,36 +165,57 @@ class VoxtralModel:
             return 0.0
     
     def _is_speech_detected(self, audio_data: np.ndarray, duration_s: float) -> bool:
-        """
-        PRODUCTION VAD: Detect if audio contains speech using energy and duration thresholds
-        """
+        """ENHANCED VAD: Multi-parameter speech detection"""
         try:
-            # Calculate audio energy
+            # Basic energy check
             energy = self._calculate_audio_energy(audio_data)
-            
-            # Apply energy threshold
             if energy < self.silence_threshold:
-                realtime_logger.debug(f"🔇 Audio energy ({energy:.6f}) below silence threshold ({self.silence_threshold})")
+                realtime_logger.debug(f"🔇 Low energy ({energy:.6f}) - likely silence")
                 return False
             
-            # Apply minimum duration threshold
+            # Duration check
             if duration_s < self.min_speech_duration:
-                realtime_logger.debug(f"⏱️ Audio duration ({duration_s:.2f}s) below minimum speech duration ({self.min_speech_duration}s)")
+                realtime_logger.debug(f"⏱️ Too short ({duration_s:.2f}s) - likely noise")
                 return False
             
-            # Additional checks for speech-like characteristics
-            # Check for spectral variation (speech has more variation than steady noise)
-            spectral_variation = np.std(audio_data)
-            if spectral_variation < self.silence_threshold * 0.5:
-                realtime_logger.debug(f"📊 Low spectral variation ({spectral_variation:.6f}), likely not speech")
-                return False
-            
-            realtime_logger.debug(f"🎙️ Speech detected - Energy: {energy:.6f}, Duration: {duration_s:.2f}s, Variation: {spectral_variation:.6f}")
-            return True
-            
+            # ENHANCED: Spectral characteristics for better accuracy
+            try:
+                # Calculate spectral features using librosa
+                import librosa
+                
+                # Spectral rolloff (frequency distribution)
+                rolloff = librosa.feature.spectral_rolloff(y=audio_data, sr=config.audio.sample_rate)[0]
+                avg_rolloff = np.mean(rolloff) / (config.audio.sample_rate / 2)  # Normalize
+                
+                # Zero crossing rate (speech vs noise)
+                zcr = librosa.feature.zero_crossing_rate(audio_data)[0]
+                avg_zcr = np.mean(zcr)
+                
+                # Speech characteristics check
+                if avg_rolloff > self.spectral_rolloff_threshold:
+                    realtime_logger.debug(f"📊 High spectral rolloff ({avg_rolloff:.3f}) - likely not speech")
+                    return False
+                
+                if avg_zcr > self.zero_crossing_rate_threshold:
+                    realtime_logger.debug(f"📈 High ZCR ({avg_zcr:.3f}) - likely noise")
+                    return False
+                
+                realtime_logger.debug(f"🎙️ SPEECH DETECTED - Energy: {energy:.6f}, Rolloff: {avg_rolloff:.3f}, ZCR: {avg_zcr:.3f}")
+                return True
+                
+            except ImportError:
+                # Fallback to basic detection if librosa features not available
+                spectral_variation = np.std(audio_data)
+                if spectral_variation < self.silence_threshold * 0.3:
+                    realtime_logger.debug(f"📊 Low variation ({spectral_variation:.6f}) - likely silence")
+                    return False
+                
+                realtime_logger.debug(f"🎙️ Speech detected - Energy: {energy:.6f}, Variation: {spectral_variation:.6f}")
+                return True
+                
         except Exception as e:
-            realtime_logger.error(f"Error in speech detection: {e}")
-            return False
+            realtime_logger.error(f"❌ VAD error: {e}")
+            return False  # Conservative: reject on error
     
     async def initialize(self):
         """Initialize the Voxtral model with FIXED attention implementation handling"""
@@ -327,23 +373,27 @@ class VoxtralModel:
                         realtime_logger.debug(f"🚀 Starting inference for chunk {chunk_id}")
                         inference_start = time.time()
                         
-                        # ENHANCED: Generate response with Voxtral-optimized settings
-                        with torch.no_grad():
-                            # Use mixed precision for speed
-                            with torch.autocast(device_type="cuda" if "cuda" in self.device else "cpu", dtype=self.torch_dtype):
-                                outputs = self.model.generate(
-                                    **inputs,
-                                    max_new_tokens=200,     # Increased for complete responses (was 25)
-                                    min_new_tokens=5,       # Ensure meaningful response
-                                    do_sample=True,         # Enable sampling for more natural responses
-                                    num_beams=1,           # Keep single beam for speed
-                                    temperature=0.2,       # Voxtral-recommended temperature for conversation
-                                    top_p=0.95,           # Voxtral-recommended top_p for conversation
-                                    repetition_penalty=1.1, # Slight penalty to avoid repetition
-                                    pad_token_id=self.processor.tokenizer.eos_token_id if hasattr(self.processor, 'tokenizer') else None,
-                                    use_cache=True,         # Use KV cache for speed
-                                    # Remove early_stopping as it's not a valid parameter
-                                )
+                        # ENHANCED: Generate response with optimized inference context
+                        with self._optimized_inference_context():
+                            with torch.no_grad():
+                                # ENHANCED: Use mixed precision with optimizations
+                                with torch.autocast(device_type="cuda" if "cuda" in self.device else "cpu", dtype=self.torch_dtype,
+                                                  enabled=True):  # Always enable for performance
+                                    outputs = self.model.generate(
+                                        **inputs,
+                                        max_new_tokens=128,     # OPTIMIZED: Balanced length (was 200)
+                                        min_new_tokens=3,       # OPTIMIZED: Faster start (was 5)
+                                        do_sample=True,         
+                                        num_beams=1,           
+                                        temperature=0.15,       # OPTIMIZED: Slightly more focused (was 0.2)
+                                        top_p=0.9,             # OPTIMIZED: Slightly more focused (was 0.95)
+                                        repetition_penalty=1.05, # OPTIMIZED: Lighter penalty (was 1.1)
+                                        pad_token_id=self.processor.tokenizer.eos_token_id if hasattr(self.processor, 'tokenizer') else None,
+                                        use_cache=True,         # ADDED: Performance optimization
+                                        early_stopping=False,   # Let model decide naturally
+                                        length_penalty=0.95,    # Slight preference for shorter responses
+                                        no_repeat_ngram_size=3, # Prevent 3-gram repetition
+                                    )
                         
                         inference_time = (time.time() - inference_start) * 1000
                         realtime_logger.debug(f"⚡ Inference completed for chunk {chunk_id} in {inference_time:.1f}ms")

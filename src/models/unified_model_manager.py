@@ -8,6 +8,7 @@ import time
 import logging
 from typing import Dict, Any, Optional, Tuple
 from threading import Lock
+from contextlib import asynccontextmanager
 import torch
 import gc
 
@@ -47,6 +48,59 @@ class UnifiedModelManager:
         self.memory_usage = {}
 
         unified_logger.info("UnifiedModelManager created")
+    
+    @asynccontextmanager
+    async def _performance_optimized_context(self):
+        """Context manager for performance-optimized operations"""
+        try:
+            # Enable GPU optimizations
+            if torch.cuda.is_available():
+                torch.backends.cudnn.benchmark = True
+                torch.backends.cuda.matmul.allow_tf32 = True
+                if hasattr(torch.backends.cudnn, 'allow_tf32'):
+                    torch.backends.cudnn.allow_tf32 = True
+            
+            # Enable CPU optimizations
+            torch.set_num_threads(min(4, torch.get_num_threads()))  # Optimal thread count
+            yield
+        finally:
+            # Cleanup and memory management
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            # Force garbage collection periodically
+            if hasattr(self, '_gc_counter'):
+                self._gc_counter += 1
+                if self._gc_counter % 10 == 0:  # Every 10 operations
+                    import gc
+                    gc.collect()
+            else:
+                self._gc_counter = 1
+    
+    def get_optimization_status(self) -> Dict[str, Any]:
+        """Get current optimization status"""
+        status = {
+            'timestamp': time.time(),
+            'optimizations_enabled': {},
+            'performance_features': {}
+        }
+        
+        if torch.cuda.is_available():
+            status['optimizations_enabled'].update({
+                'cudnn_benchmark': getattr(torch.backends.cudnn, 'benchmark', False),
+                'allow_tf32': getattr(torch.backends.cuda.matmul, 'allow_tf32', False),
+                'flash_attention_available': getattr(self.voxtral_model, 'flash_attention_available', False) if self.voxtral_model else False
+            })
+            
+            # GPU performance features
+            gpu_props = torch.cuda.get_device_properties(0)
+            status['performance_features'].update({
+                'gpu_compute_capability': f"{gpu_props.major}.{gpu_props.minor}",
+                'gpu_memory_gb': gpu_props.total_memory / 1e9,
+                'multi_processor_count': gpu_props.multi_processor_count
+            })
+        
+        return status
     
     async def initialize(self) -> bool:
         """
