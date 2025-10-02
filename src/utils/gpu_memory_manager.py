@@ -353,6 +353,7 @@ class GPUMemoryManager:
     def enable_ultra_fast_mode(self):
         """Enable ultra-fast mode for <500ms latency"""
         if not torch.cuda.is_available():
+            self.logger.warning("CUDA not available - cannot enable ultra-fast mode")
             return False
         
         try:
@@ -382,11 +383,11 @@ class GPUMemoryManager:
                 'NVIDIA_TF32_OVERRIDE': '1'
             })
             
-            gpu_logger.info("🚀 ULTRA-FAST mode enabled - targeting <500ms latency")
+            self.logger.info("🚀 ULTRA-FAST mode enabled - targeting <500ms latency")
             return True
             
         except Exception as e:
-            gpu_logger.error(f"Failed to enable ultra-fast mode: {e}")
+            self.logger.error(f"Failed to enable ultra-fast mode: {e}")
             return False
 
 # Global memory manager instance
