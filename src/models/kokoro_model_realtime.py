@@ -61,13 +61,13 @@ class KokoroTTSModel:
         quality_preset = getattr(config.tts.performance, 'quality_preset', 'balanced')
         if quality_preset == 'speed':
             self.speed_multiplier = 1.2
-            self.quality_settings = {'temperature': 0.7, 'top_p': 0.8}
+            self.quality_settings = {}  # REMOVED: temperature not supported by KPipeline
         elif quality_preset == 'quality':
             self.speed_multiplier = 0.9
-            self.quality_settings = {'temperature': 0.5, 'top_p': 0.9}
+            self.quality_settings = {}  # REMOVED: temperature not supported by KPipeline
         else:  # balanced
             self.speed_multiplier = 1.0
-            self.quality_settings = {'temperature': 0.6, 'top_p': 0.85}
+            self.quality_settings = {}  # REMOVED: temperature not supported by KPipeline
         
         tts_logger.info(f"🎵 KokoroTTSModel initialized with device: {self.device}")
         tts_logger.info(f"   🎤 Voice: {self.voice}, Speed: {self.speed}, Lang: {self.lang_code}")

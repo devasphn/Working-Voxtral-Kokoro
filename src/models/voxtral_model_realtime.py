@@ -561,9 +561,10 @@ class VoxtralModel:
             
             # Prepare inputs
             inputs = self.processor(
-                audio=audio_data.cpu().numpy(),
+                audio_values=audio_data.cpu().numpy(),  # FIXED: Use 'audio_values' not 'audio'
                 text=conversation_prompt,
                 sampling_rate=config.audio.sample_rate,
+                # REMOVED: 'return_dict', 'tokenize' - not supported
                 return_tensors="pt"
             ).to(self.device)
             

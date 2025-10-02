@@ -546,6 +546,53 @@ class UnifiedModelManager:
                 }
             }
     
+    async def process_conversation_chunk(self, audio_data: Union[torch.Tensor, np.ndarray], chunk_id: str) -> Dict[str, Any]:
+        """Process conversation chunk using WORKING method"""
+        if not self.is_initialized:
+            raise RuntimeError("UnifiedModelManager not initialized")
+        
+        try:
+            unified_logger.info(f"🎯 Processing conversation chunk {chunk_id}")
+            
+            # Use the EXISTING working Voxtral method
+            voxtral_result = await self.voxtral_model.process_realtime_chunk(
+                audio_data, chunk_id, mode="conversation"
+            )
+            
+            if voxtral_result['success'] and voxtral_result['response'].strip():
+                # Generate TTS
+                tts_result = await self.kokoro_model.synthesize_speech(
+                    text=voxtral_result['response'],
+                    chunk_id=chunk_id
+                )
+                
+                return {
+                    'success': True,
+                    'text': voxtral_result['response'],
+                    'audio_data': tts_result.get('audio_data', np.array([])),
+                    'sample_rate': tts_result.get('sample_rate', 16000),
+                    'processing_time_ms': voxtral_result.get('processing_time_ms', 0),
+                    'synthesis_time_ms': tts_result.get('synthesis_time_ms', 0)
+                }
+            else:
+                return {
+                    'success': False,
+                    'text': "Sorry, I didn't understand that.",
+                    'audio_data': np.array([]),
+                    'sample_rate': 16000,
+                    'error': 'No speech detected or processing failed'
+                }
+                
+        except Exception as e:
+            unified_logger.error(f"❌ Conversation processing error for {chunk_id}: {e}")
+            return {
+                'success': False,
+                'text': "Sorry, there was an error.",
+                'audio_data': np.array([]),
+                'sample_rate': 16000,
+                'error': str(e)
+            }
+    
     async def shutdown(self):
         """Shutdown and cleanup all resources"""
         try:

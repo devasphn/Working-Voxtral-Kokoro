@@ -42,6 +42,7 @@ class GPUMemoryManager:
 
     def __init__(self):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.logger = gpu_logger  # ADD this line for consistency
         self.memory_pool = None
         self.allocated_memory = {}
         self.voxtral_memory_gb = 0.0
