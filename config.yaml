@@ -1,70 +1,106 @@
-# Configuration for Voxtral Real-time Streaming (FIXED)
+# ULTRA-LOW LATENCY Configuration for <500ms end-to-end
 server:
   host: "0.0.0.0"
   http_port: 8000
   health_port: 8005
-  tcp_ports:
-    - 8765
-    - 8766
-  
+  tcp_ports: [] # DISABLED: Remove unused ports
+
 model:
   name: "mistralai/Voxtral-Mini-3B-2507"
   cache_dir: "./model_cache"
   device: "cuda"
-  torch_dtype: "bfloat16"
-  max_memory_per_gpu: "6GB"
-  
+  torch_dtype: "float16" # CRITICAL: Maximum speed
+  max_memory_per_gpu: "8GB" # INCREASED: Allow more memory for speed
+  # ULTRA-FAST settings
+  ultra_fast_mode: true
+  warmup_enabled: true
+
 audio:
   sample_rate: 16000
-  chunk_size: 1024
+  chunk_size: 1024 # OPTIMIZED: Good balance
   format: "int16"
   channels: 1
-  frame_duration_ms: 30
-  
-# Mel spectrogram configuration matching Voxtral (FIXED)
-spectrogram:
-  n_mels: 128
-  hop_length: 160
-  win_length: 400
-  n_fft: 1024  # FIXED: Increased to 1024 to fully resolve mel filterbank warning
-  
-streaming:
-  max_connections: 100
-  buffer_size: 4096
-  timeout_seconds: 300
-  latency_target_ms: 200
+  frame_duration_ms: 20 # FAST: 2x faster than before
 
-# TTS (Text-to-Speech) configuration - Kokoro TTS
+# ULTRA-AGGRESSIVE VAD for <500ms
+vad:
+  threshold: 0.005 # ULTRA-SENSITIVE: 2x more sensitive
+  min_voice_duration_ms: 200 # ULTRA-FAST: 2.5x faster detection
+  min_silence_duration_ms: 400 # ULTRA-FAST: 2x faster completion
+  chunk_size_ms: 20 # ULTRA-SMALL: Minimal chunks
+  overlap_ms: 2 # ULTRA-MINIMAL: Tiny overlap
+  sensitivity: "ultra_high" # Maximum sensitivity
+
+spectrogram:
+  n_mels: 64 # REDUCED: 2x smaller for speed (was 128)
+  hop_length: 160
+  win_length: 320 # REDUCED: Faster processing (was 400)
+  n_fft: 512 # REDUCED: 2x smaller for speed (was 1024)
+
+streaming:
+  enabled: true
+  chunk_mode: "sentence_streaming" # Stream sentence by sentence
+  max_connections: 50 # REDUCED: Focus resources (was 100)
+  buffer_size: 1024 # ULTRA-SMALL: 2x smaller (was 2048)
+  timeout_seconds: 300
+  latency_target_ms: 50 # ULTRA-AGGRESSIVE: 10x more aggressive (was 500)
+
+# ADDED: Chunked Streaming Configuration
+chunked_response:
+  enabled: true
+  min_words_per_chunk: 2
+  max_words_per_chunk: 8
+  chunk_timeout_ms: 200
+  separator_phrases: [". ", "? ", "! ", ", ", " and ", " but ", " so "]
+
+# ULTRA-FAST TTS
 tts:
   engine: "kokoro"
-  default_voice: "hf_alpha"  # Kokoro Hindi voice (Heart - Calm & Friendly)
-  sample_rate: 24000
+  default_voice: "hf_alpha"
+  sample_rate: 16000 # CRITICAL: Match audio pipeline
   enabled: true
-  # Kokoro TTS settings
-  voice: "hf_alpha"  # Kokoro Hindi voice (Heart - Calm & Friendly)
-  speed: 1.0  # Kokoro speech speed
-  lang_code: "h"  # Kokoro language code (h=Hindi, a=American English, b=British English)
-  # Available voices by language - Kokoro voices only
-  voices:
-    english: ["af_heart", "af_bella", "af_nicole", "af_sarah"]  # Kokoro English voices
-    hindi: ["hf_alpha", "hf_beta", "hm_psi"]  # Kokoro Hindi voices
-  # Performance settings
+  voice: "hf_alpha"
+  speed: 1.1 # SLIGHTLY FASTER: 10% speed boost
+  lang_code: "h"
+  # ULTRA-FAST performance
   performance:
-    batch_size: 1  # Direct integration uses batch_size=1
-    max_queue_size: 32
-    num_workers: 4
-    target_latency_ms: 150
+    batch_size: 1
+    max_queue_size: 2 # ULTRA-MINIMAL: No queuing (was 8)
+    num_workers: 1 # SINGLE WORKER: Eliminate overhead
+    target_latency_ms: 75 # ULTRA-FAST: 25% faster (was 100ms)
+    quality_preset: "speed" # PRIORITIZE SPEED over quality
 
-# Speech-to-Speech pipeline configuration
+  # TTS Streaming settings
+  streaming:
+    enabled: true
+    chunk_processing: true # Process TTS chunks immediately
+    max_queue_size: 2
+    target_latency_ms: 75
+
+# ULTRA-FAST Speech-to-Speech
 speech_to_speech:
   enabled: true
-  latency_target_ms: 300  # Updated to match <300ms requirement
-  buffer_size: 8192
+  latency_target_ms: 100 # ULTRA-AGGRESSIVE: 2x faster (was 200ms)
+  buffer_size: 1024 # ULTRA-SMALL: 4x smaller
   output_format: "wav"
-  quality: "high"
-  emotional_expression: true
-  
+  quality: "speed" # PRIORITIZE SPEED
+  emotional_expression: false # DISABLED: Skip emotion processing for speed
+
+  streaming:
+    enabled: true
+    mode: "word_level" # FASTEST possible mode
+    word_trigger_threshold: 1 # START after just 1 word
+    max_tokens: 25 # ULTRA-SHORT responses
+    interruption_detection: false # DISABLED: Skip for speed
+
+# ULTRA-FAST performance monitoring
+performance:
+  enable_monitoring: true
+  log_detailed_metrics: false # DISABLED: Reduce logging overhead
+  latency_warning_threshold_ms: 500
+  memory_monitoring: false # DISABLED: Reduce overhead
+
 logging:
-  level: "INFO"
+  level: "WARNING" # REDUCED: Less logging overhead (was INFO)
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   file: "./logs/voxtral_streaming.log"

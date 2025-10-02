@@ -5,7 +5,7 @@ FIXED: FlashAttention2 detection, VAD implementation, silence handling
 import torch
 import asyncio
 import time
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union, AsyncGenerator
 # ADD these imports at the top
 import gc
 from contextlib import contextmanager
@@ -63,25 +63,47 @@ class VoxtralModel:
     """PRODUCTION-READY Voxtral model for conversational real-time streaming with VAD"""
     
     def __init__(self):
+        """Initialize VoxtralModel with ULTRA-FAST + chunked streaming"""
+        self.is_initialized = False
+        self.device = config.model.device
+        self.torch_dtype = getattr(torch, config.model.torch_dtype)
+        
+        # FIXED: Safe VAD configuration access
+        vad_config = getattr(config, 'vad', None)
+        if vad_config:
+            self.silence_threshold = getattr(vad_config, 'threshold', 0.010)
+            self.min_speech_duration = getattr(vad_config, 'min_voice_duration_ms', 300) / 1000
+            self.max_silence_duration = getattr(vad_config, 'min_silence_duration_ms', 800) / 1000
+            self.vad_sensitivity = getattr(vad_config, 'sensitivity', 'balanced')
+        else:
+            # FALLBACK: Default VAD settings for ultra-fast mode
+            self.silence_threshold = 0.005  # Ultra-sensitive
+            self.min_speech_duration = 0.2  # 200ms
+            self.max_silence_duration = 0.4  # 400ms  
+            self.vad_sensitivity = 'ultra_high'
+        
+        # ADDED: Chunked streaming configuration
+        self.streaming_enabled = True
+        self.chunk_separator_phrases = ['. ', '? ', '! ', ', ', ' and ', ' but ', ' so ']
+        self.min_chunk_words = 2  # Minimum words per chunk
+        self.max_chunk_words = 8  # Maximum words per chunk
+        self.chunk_timeout_ms = 200  # Send chunk after 200ms even if incomplete
+        
+        # ADDED: Performance optimization settings
+        self.max_response_words = 50  # Ultra-short responses for speed
+        self.response_temperature = 0.1  # Very focused responses
+        
+        # Initialize other attributes
         self.model = None
         self.processor = None
-        self.audio_processor = None
-        self.model_lock = Lock()
-        self.is_initialized = False
+        self.flash_attention_available = False
+        self.generation_history = deque(maxlen=100)
         
         # Real-time streaming optimization
         self.recent_chunks = deque(maxlen=5)  # Reduced for faster processing
         self.processing_history = deque(maxlen=50)  # Reduced memory usage
-        
-        # Performance optimization settings
-        self.device = config.model.device
-        self.torch_dtype = getattr(torch, config.model.torch_dtype)
-        
-        # ENHANCED VAD settings aligned with config.yaml
-        self.silence_threshold = getattr(config.vad, 'threshold', 0.010)
-        self.min_speech_duration = getattr(config.vad, 'min_voice_duration_ms', 300) / 1000  # Convert to seconds
-        self.max_silence_duration = getattr(config.vad, 'min_silence_duration_ms', 800) / 1000
-        self.vad_sensitivity = getattr(config.vad, 'sensitivity', 'balanced')
+        self.model_lock = Lock()
+        self.audio_processor = None
         
         # ADDED: Advanced VAD parameters
         self.spectral_rolloff_threshold = 0.85  # For speech quality detection
@@ -89,9 +111,8 @@ class VoxtralModel:
         
         # Performance optimization flags
         self.use_torch_compile = False  # Disabled by default for stability
-        self.flash_attention_available = False
         
-        realtime_logger.info(f"VoxtralModel initialized for {self.device} with {self.torch_dtype}")
+        realtime_logger.info("🚀 VoxtralModel initialized with ULTRA-FAST + CHUNKED STREAMING")
     
     @contextmanager
     def _optimized_inference_context(self):
@@ -538,6 +559,218 @@ class VoxtralModel:
             mode="conversation"
         )
         return result['response']
+    
+    async def process_realtime_chunk_streaming(self, audio_data: Union[torch.Tensor, np.ndarray], chunk_id: str, mode: str = "conversation") -> AsyncGenerator[Dict[str, Any], None]:
+        """CHUNKED STREAMING: Generate response in real-time chunks
+        Yields: Dict with chunk data as it's generated"""
+        if not self.is_initialized:
+            raise RuntimeError("VoxtralModel not initialized")
+        
+        chunk_start_time = time.time()
+        realtime_logger.info(f"🎯 Starting CHUNKED STREAMING for chunk {chunk_id}")
+        
+        try:
+            # Prepare audio input (same as before)
+            if isinstance(audio_data, np.ndarray):
+                audio_data = torch.from_numpy(audio_data).float()
+            if audio_data.device != self.device:
+                audio_data = audio_data.to(self.device)
+            
+            # Check for speech
+            energy = self._calculate_audio_energy(audio_data.cpu().numpy())
+            duration_s = len(audio_data) / config.audio.sample_rate
+            if not self._is_speech_detected(audio_data.cpu().numpy(), duration_s):
+                realtime_logger.debug(f"🔇 No speech in chunk {chunk_id} - skipping")
+                return
+            
+            # Create conversation prompt for short responses
+            conversation_prompt = self._create_ultra_short_streaming_prompt()
+            
+            # Prepare inputs
+            inputs = self.processor(
+                audio=audio_data.cpu().numpy(),
+                text=conversation_prompt,
+                sampling_rate=config.audio.sample_rate,
+                return_tensors="pt"
+            ).to(self.device)
+            
+            realtime_logger.debug(f"🚀 Starting STREAMING inference for chunk {chunk_id}")
+            inference_start = time.time()
+            
+            # STREAMING GENERATION: Generate tokens one by one
+            with torch.no_grad():
+                with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=True):
+                    # Initialize generation
+                    input_ids = inputs.get('input_ids')
+                    attention_mask = inputs.get('attention_mask')
+                    audio_values = inputs.get('audio_values')
+                    
+                    # Set up generation parameters for streaming
+                    max_new_tokens = self.max_response_words * 2  # Approximate tokens per word
+                    generated_ids = input_ids.clone()
+                    current_chunk = []
+                    chunk_counter = 0
+                    last_chunk_time = time.time()
+                    
+                    # STREAMING LOOP: Generate token by token
+                    for step in range(max_new_tokens):
+                        # Generate next token
+                        with torch.autocast(device_type="cuda", dtype=torch.float16):
+                            outputs = self.model(
+                                input_ids=generated_ids,
+                                attention_mask=attention_mask,
+                                audio_values=audio_values,
+                                use_cache=True
+                            )
+                        
+                        # Get next token probabilities
+                        next_token_logits = outputs.logits[:, -1, :] / self.response_temperature
+                        
+                        # Apply top-k and top-p sampling for variety
+                        filtered_logits = self._apply_sampling_filters(next_token_logits, top_k=10, top_p=0.9)
+                        probs = torch.softmax(filtered_logits, dim=-1)
+                        next_token = torch.multinomial(probs, num_samples=1)
+                        
+                        # Add token to sequence
+                        generated_ids = torch.cat([generated_ids, next_token], dim=-1)
+                        
+                        # Decode the new token
+                        new_text = self.processor.tokenizer.decode(next_token[0], skip_special_tokens=True)
+                        if new_text.strip():
+                            current_chunk.append(new_text.strip())
+                        
+                        # Check for chunk completion
+                        current_text = ' '.join(current_chunk)
+                        should_send_chunk = False
+                        
+                        # Chunk completion criteria
+                        if self._should_complete_chunk(current_text, last_chunk_time):
+                            should_send_chunk = True
+                        
+                        # Send chunk if ready
+                        if should_send_chunk and current_chunk:
+                            chunk_counter += 1
+                            chunk_text = current_text.strip()
+                            
+                            # Clean and validate chunk
+                            if len(chunk_text) > 1:
+                                processing_time = (time.time() - chunk_start_time) * 1000
+                                chunk_result = {
+                                    'chunk_id': f"{chunk_id}_stream_{chunk_counter}",
+                                    'text': chunk_text,
+                                    'is_streaming': True,
+                                    'is_final': False,
+                                    'processing_time_ms': processing_time,
+                                    'word_count': len(chunk_text.split()),
+                                    'chunk_number': chunk_counter,
+                                    'timestamp': time.time()
+                                }
+                                
+                                realtime_logger.info(f"🎯 STREAMING CHUNK {chunk_counter}: '{chunk_text}'")
+                                yield chunk_result
+                                
+                                # Reset for next chunk
+                                current_chunk = []
+                                last_chunk_time = time.time()
+                        
+                        # Check for end of generation
+                        if self._should_end_generation(new_text, generated_ids, step):
+                            break
+                    
+                    # Send final chunk if any remaining
+                    if current_chunk:
+                        chunk_counter += 1
+                        final_text = ' '.join(current_chunk).strip()
+                        if final_text:
+                            processing_time = (time.time() - chunk_start_time) * 1000
+                            final_result = {
+                                'chunk_id': f"{chunk_id}_stream_{chunk_counter}",
+                                'text': final_text,
+                                'is_streaming': True,
+                                'is_final': True,
+                                'processing_time_ms': processing_time,
+                                'word_count': len(final_text.split()),
+                                'chunk_number': chunk_counter,
+                                'total_chunks': chunk_counter,
+                                'timestamp': time.time()
+                            }
+                            
+                            realtime_logger.info(f"🎯 FINAL STREAMING CHUNK: '{final_text}'")
+                            yield final_result
+            
+            total_time = (time.time() - chunk_start_time) * 1000
+            realtime_logger.info(f"✅ CHUNKED STREAMING complete for {chunk_id} in {total_time:.1f}ms ({chunk_counter} chunks)")
+            
+        except Exception as e:
+            error_time = (time.time() - chunk_start_time) * 1000
+            realtime_logger.error(f"❌ CHUNKED STREAMING error for {chunk_id}: {e}")
+            
+            # Yield error response
+            yield {
+                'chunk_id': f"{chunk_id}_error",
+                'text': "Sorry, I didn't understand that.",
+                'is_streaming': True,
+                'is_final': True,
+                'processing_time_ms': error_time,
+                'error': str(e),
+                'timestamp': time.time()
+            }
+    
+    def _create_ultra_short_streaming_prompt(self) -> str:
+        """Create prompt optimized for streaming responses"""
+        return ("Respond naturally in 1-3 short sentences. Be conversational and helpful. "
+                "Keep each sentence under 8 words for smooth streaming.")
+    
+    def _should_complete_chunk(self, current_text: str, last_chunk_time: float) -> bool:
+        """Determine if current chunk should be completed"""
+        words = current_text.split()
+        time_since_last = (time.time() - last_chunk_time) * 1000
+        
+        # Criteria for chunk completion
+        if len(words) >= self.max_chunk_words:  # Word limit reached
+            return True
+        if time_since_last >= self.chunk_timeout_ms:  # Timeout reached
+            return True
+        if any(sep in current_text for sep in self.chunk_separator_phrases):  # Natural break
+            return True
+        if len(words) >= self.min_chunk_words and current_text.endswith(('.', '!', '?')):  # Sentence end
+            return True
+        
+        return False
+    
+    def _should_end_generation(self, new_text: str, generated_ids: torch.Tensor, step: int) -> bool:
+        """Determine if generation should end"""
+        # End conditions
+        if new_text in ['</s>', '<|endoftext|>', '[END]']:  # Special tokens
+            return True
+        if step >= self.max_response_words * 2:  # Max tokens reached
+            return True
+        if generated_ids.shape[1] > 1000:  # Safety limit
+            return True
+        
+        return False
+    
+    def _apply_sampling_filters(self, logits: torch.Tensor, top_k: int = 10, top_p: float = 0.9) -> torch.Tensor:
+        """Apply top-k and top-p filtering for better generation"""
+        # Top-k filtering
+        if top_k > 0:
+            indices_to_remove = logits < torch.topk(logits, top_k)[0][..., -1, None]
+            logits[indices_to_remove] = -float('inf')
+        
+        # Top-p filtering  
+        if top_p < 1.0:
+            sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+            cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
+            
+            # Remove tokens with cumulative probability above threshold
+            sorted_indices_to_remove = cumulative_probs > top_p
+            sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+            sorted_indices_to_remove[..., 0] = 0
+            
+            indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
+            logits[indices_to_remove] = -float('inf')
+        
+        return logits
     
     def get_model_info(self) -> Dict[str, Any]:
         """Get enhanced model information with real-time stats"""

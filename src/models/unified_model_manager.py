@@ -6,7 +6,7 @@ Centralized management of both Voxtral and Kokoro TTS models with shared GPU mem
 import asyncio
 import time
 import logging
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, Union, AsyncGenerator
 from threading import Lock
 from contextlib import asynccontextmanager
 import torch
@@ -477,6 +477,71 @@ class UnifiedModelManager:
         except Exception as e:
             unified_logger.error(f"❌ Failed to get model info: {e}")
             return {"error": str(e)}
+    
+    async def process_streaming_conversation(self, audio_data: Union[torch.Tensor, np.ndarray], chunk_id: str) -> AsyncGenerator[Dict[str, Any], None]:
+        """Process conversation with CHUNKED STREAMING
+        Yields both text chunks and audio chunks in real-time"""
+        if not self.is_initialized:
+            raise RuntimeError("UnifiedModelManager not initialized")
+        
+        try:
+            unified_logger.info(f"🎯 Starting STREAMING conversation for {chunk_id}")
+            
+            # Process audio with streaming Voxtral
+            async for text_chunk in self.voxtral_model.process_realtime_chunk_streaming(
+                audio_data, chunk_id, mode="conversation"
+            ):
+                # Yield the text chunk immediately
+                yield {
+                    'type': 'text_chunk',
+                    'data': text_chunk
+                }
+                
+                # Generate TTS for this chunk in parallel
+                if text_chunk['text'].strip():
+                    try:
+                        # Generate TTS audio for this chunk
+                        tts_result = await self.kokoro_model.synthesize_speech(
+                            text=text_chunk['text'],
+                            chunk_id=text_chunk['chunk_id']
+                        )
+                        
+                        if tts_result['success'] and len(tts_result['audio_data']) > 0:
+                            # Yield the audio chunk
+                            yield {
+                                'type': 'audio_chunk',
+                                'data': {
+                                    'chunk_id': text_chunk['chunk_id'],
+                                    'audio_data': tts_result['audio_data'],
+                                    'sample_rate': tts_result['sample_rate'],
+                                    'duration_ms': tts_result.get('audio_duration_s', 0) * 1000,
+                                    'synthesis_time_ms': tts_result['synthesis_time_ms'],
+                                    'text': text_chunk['text'],
+                                    'chunk_number': text_chunk.get('chunk_number', 1),
+                                    'is_final': text_chunk.get('is_final', False)
+                                }
+                            }
+                            
+                            unified_logger.info(f"🎵 TTS chunk {text_chunk['chunk_id']} ready: {len(tts_result['audio_data'])} samples")
+                            
+                    except Exception as e:
+                        unified_logger.error(f"❌ TTS error for chunk {text_chunk['chunk_id']}: {e}")
+                        # Continue with next chunk even if TTS fails
+            
+            unified_logger.info(f"✅ STREAMING conversation complete for {chunk_id}")
+            
+        except Exception as e:
+            unified_logger.error(f"❌ STREAMING conversation error for {chunk_id}: {e}")
+            
+            # Yield error response
+            yield {
+                'type': 'error',
+                'data': {
+                    'chunk_id': f"{chunk_id}_error",
+                    'error': str(e),
+                    'message': "Sorry, there was an error processing your request."
+                }
+            }
     
     async def shutdown(self):
         """Shutdown and cleanup all resources"""

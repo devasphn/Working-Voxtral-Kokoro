@@ -293,6 +293,38 @@ async def home(request: Request):
             50% { opacity: 0.7; transform: scale(1.2); }
             100% { opacity: 1; transform: scale(1); }
         }
+        .streaming-container {
+            margin: 20px 0;
+            padding: 15px;
+            border: 2px solid #4CAF50;
+            border-radius: 10px;
+            background-color: #f9f9f9;
+        }
+        .streaming-response {
+            min-height: 60px;
+            padding: 15px;
+            background-color: white;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+            font-family: Arial, sans-serif;
+            line-height: 1.5;
+            color: #333;
+            animation: pulse 1s infinite;
+        }
+        .streaming-response.final {
+            animation: none;
+            background-color: #e8f5e8;
+            border-color: #4CAF50;
+        }
+        .streaming-stats {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #666;
+        }
+        .streaming-stats span {
+            margin-right: 20px;
+        }
         .volume-meter {
             width: 100%;
             height: 20px;
@@ -438,6 +470,18 @@ async def home(request: Request):
             <div class="metric">
                 <div class="metric-value" id="durationMetric">00:00</div>
                 <div class="metric-label">Conversation Duration</div>
+            </div>
+        </div>
+        
+        <!-- STREAMING RESPONSE DISPLAY -->
+        <div class="streaming-container">
+            <h3>🎯 Live Streaming Response:</h3>
+            <div id="streaming-response" class="streaming-response">
+                <!-- Real-time streaming text will appear here -->
+            </div>
+            <div class="streaming-stats">
+                <span id="chunk-counter">Chunks: 0</span>
+                <span id="streaming-latency">Latency: 0ms</span>
             </div>
         </div>
         
@@ -871,9 +915,58 @@ async def home(request: Request):
                     log('WebSocket connection established');
                 };
                 
-                ws.onmessage = (event) => {
-                    const data = JSON.parse(event.data);
-                    handleWebSocketMessage(data);
+                // CHUNKED STREAMING: Handle real-time audio chunks
+                ws.onmessage = async (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        
+                        if (data.type === 'connection') {
+                            log('Connected to Voxtral CHUNKED STREAMING AI');
+                            updateConnectionStatus(true);
+                        }
+                        else if (data.type === 'text_chunk') {
+                            // Display text chunk immediately
+                            log(`📝 Text Chunk ${data.chunk_number}: "${data.text}"`);
+                            
+                            // Update UI with streaming text
+                            updateStreamingResponse(data.text, data.is_final);
+                        }
+                        else if (data.type === 'audio_chunk') {
+                            // Play audio chunk immediately as it arrives
+                            log(`🎵 Audio Chunk ${data.chunk_number}: ${data.duration_ms}ms audio`);
+                            
+                            try {
+                                // Decode audio data
+                                const audioBytes = Uint8Array.from(atob(data.audio_data), c => c.charCodeAt(0));
+                                const audioFloat32 = new Float32Array(audioBytes.buffer);
+                                
+                                // Create audio buffer
+                                const audioBuffer = audioContext.createBuffer(1, audioFloat32.length, data.sample_rate);
+                                audioBuffer.copyToChannel(audioFloat32, 0);
+                                
+                                // Play immediately (queue for seamless playback)
+                                await playAudioChunkStreaming(audioBuffer, data.chunk_id);
+                                log(`✅ Playing audio chunk ${data.chunk_number} (${data.duration_ms}ms)`);
+                                
+                            } catch (audioError) {
+                                console.error('Audio chunk playback error:', audioError);
+                            }
+                        }
+                        else if (data.type === 'streaming_complete') {
+                            log(`✅ Streaming complete: ${data.total_chunks} chunks processed`);
+                            pendingResponse = false;
+                            updateVadStatus('ready');
+                        }
+                        else if (data.type === 'error') {
+                            console.error('Streaming error:', data.error);
+                            log(`❌ Error: ${data.message}`);
+                            pendingResponse = false;
+                            updateVadStatus('error');
+                        }
+                        
+                    } catch (error) {
+                        console.error('Message parsing error:', error);
+                    }
                 };
                 
                 ws.onclose = (event) => {
@@ -1255,6 +1348,82 @@ async def home(request: Request):
             }
         }
         
+        // STREAMING AUDIO PLAYBACK: Queue and play chunks seamlessly
+        const audioChunkQueue = [];
+        let isPlayingChunks = false;
+        
+        async function playAudioChunkStreaming(audioBuffer, chunkId) {
+            return new Promise((resolve, reject) => {
+                try {
+                    // Add to queue
+                    audioChunkQueue.push({ buffer: audioBuffer, id: chunkId, resolve, reject });
+                    
+                    // Start playing if not already
+                    if (!isPlayingChunks) {
+                        processAudioChunkQueue();
+                    }
+                } catch (error) {
+                    reject(error);
+                }
+            });
+        }
+        
+        async function processAudioChunkQueue() {
+            if (isPlayingChunks || audioChunkQueue.length === 0) {
+                return;
+            }
+            
+            isPlayingChunks = true;
+            
+            while (audioChunkQueue.length > 0) {
+                const chunk = audioChunkQueue.shift();
+                
+                try {
+                    // Create and play audio source
+                    const source = audioContext.createBufferSource();
+                    source.buffer = chunk.buffer;
+                    source.connect(audioContext.destination);
+                    
+                    // Play and wait for completion
+                    await new Promise((resolve) => {
+                        source.onended = resolve;
+                        source.start();
+                    });
+                    
+                    chunk.resolve();
+                } catch (error) {
+                    console.error(`Audio chunk ${chunk.id} playback error:`, error);
+                    chunk.reject(error);
+                }
+            }
+            
+            isPlayingChunks = false;
+            log('🎵 All audio chunks played');
+        }
+        
+        // UPDATE STREAMING RESPONSE DISPLAY
+        let currentStreamingResponse = '';
+        function updateStreamingResponse(textChunk, isFinal) {
+            currentStreamingResponse += textChunk + ' ';
+            
+            // Update display
+            const responseElement = document.getElementById('streaming-response');
+            if (responseElement) {
+                responseElement.textContent = currentStreamingResponse;
+                
+                if (isFinal) {
+                    responseElement.classList.add('final');
+                    
+                    // Clear for next response
+                    setTimeout(() => {
+                        currentStreamingResponse = '';
+                        responseElement.textContent = '';
+                        responseElement.classList.remove('final');
+                    }, 5000);
+                }
+            }
+        }
+        
         async function startConversation() {
             try {
                 log('Starting conversational audio streaming with VAD...');
@@ -1604,293 +1773,120 @@ async def api_status():
             "integration_type": "kokoro_tts"
         }, status_code=500)
 
-# WebSocket endpoint for CONVERSATIONAL streaming with VAD
+# WebSocket endpoint for CHUNKED STREAMING
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for CONVERSATIONAL audio streaming with VAD"""
     await websocket.accept()
     client_id = f"{websocket.client.host}:{websocket.client.port}"
-    streaming_logger.info(f"[CONVERSATION] Client connected: {client_id}")
+    streaming_logger.info(f"[STREAMING] Client connected: {client_id}")
     
     try:
-        # Send welcome message
-        await websocket.send_text(json.dumps({
-            "type": "connection",
-            "status": "connected",
-            "message": "Connected to Voxtral conversational AI with VAD",
-            "server_config": {
-                "sample_rate": config.audio.sample_rate,
-                "chunk_size": config.audio.chunk_size,
-                "latency_target": config.streaming.latency_target_ms,
-                "streaming_mode": "conversational_optimized_with_vad",
-                "vad_enabled": True
-            }
-        }))
+        await websocket.send_json({
+            "type": "connection", 
+            "message": "Connected to Voxtral CHUNKED STREAMING AI",
+            "streaming_enabled": True
+        })
         
         while True:
             try:
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=300.0)
-                message = json.loads(data)
-                msg_type = message.get("type")
+                # Receive message from client
+                message = await websocket.receive_json()
+                message_type = message.get("type")
                 
-                streaming_logger.debug(f"[CONVERSATION] Received message type: {msg_type} from {client_id}")
-                
-                if msg_type == "audio_chunk":
-                    await handle_conversational_audio_chunk(websocket, message, client_id)
+                if message_type == "audio_chunk":
+                    chunk_id = message.get("chunk_id", f"chunk_{int(time.time() * 1000)}")
+                    streaming_logger.debug(f"[STREAMING] Processing chunk {chunk_id} for {client_id}")
                     
-                elif msg_type == "ping":
-                    await websocket.send_text(json.dumps({
-                        "type": "pong", 
-                        "timestamp": time.time()
-                    }))
+                    # Decode audio data
+                    try:
+                        audio_data_b64 = message.get("audio_data", "")
+                        if not audio_data_b64:
+                            continue
+                        
+                        audio_bytes = base64.b64decode(audio_data_b64)
+                        audio_data = np.frombuffer(audio_bytes, dtype=np.float32)
+                    except Exception as e:
+                        streaming_logger.error(f"❌ Audio decoding error: {e}")
+                        continue
                     
-                elif msg_type == "status":
+                    # Process with CHUNKED STREAMING
                     unified_manager = get_unified_manager()
-                    model_info = unified_manager.get_model_info()
-                    performance_monitor = get_performance_monitor()
-                    performance_summary = performance_monitor.get_performance_summary()
                     
-                    await websocket.send_text(json.dumps({
-                        "type": "status",
-                        "model_info": model_info,
-                        "performance_summary": performance_summary
-                    }))
+                    # Stream response chunks as they're generated
+                    chunk_counter = 0
+                    async for stream_result in unified_manager.process_streaming_conversation(audio_data, chunk_id):
+                        chunk_counter += 1
+                        
+                        if stream_result['type'] == 'text_chunk':
+                            # Send text chunk immediately
+                            text_data = stream_result['data']
+                            await websocket.send_json({
+                                "type": "text_chunk",
+                                "chunk_id": text_data['chunk_id'],
+                                "text": text_data['text'],
+                                "is_final": text_data.get('is_final', False),
+                                "chunk_number": text_data.get('chunk_number', chunk_counter),
+                                "processing_time_ms": text_data.get('processing_time_ms', 0)
+                            })
+                            streaming_logger.info(f"📤 Text chunk sent: '{text_data['text']}'")
+                            
+                        elif stream_result['type'] == 'audio_chunk':
+                            # Send audio chunk for immediate playback
+                            audio_data = stream_result['data']
+                            
+                            # Encode audio as base64
+                            audio_bytes = audio_data['audio_data'].astype(np.float32).tobytes()
+                            audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+                            
+                            await websocket.send_json({
+                                "type": "audio_chunk", 
+                                "chunk_id": audio_data['chunk_id'],
+                                "audio_data": audio_b64,
+                                "sample_rate": audio_data['sample_rate'],
+                                "duration_ms": audio_data['duration_ms'],
+                                "text": audio_data['text'],
+                                "chunk_number": audio_data.get('chunk_number', chunk_counter),
+                                "is_final": audio_data.get('is_final', False),
+                                "synthesis_time_ms": audio_data.get('synthesis_time_ms', 0)
+                            })
+                            streaming_logger.info(f"🎵 Audio chunk sent: {audio_data['duration_ms']:.0f}ms audio")
+                            
+                        elif stream_result['type'] == 'error':
+                            # Send error response
+                            await websocket.send_json({
+                                "type": "error",
+                                "message": stream_result['data']['message'],
+                                "error": stream_result['data']['error']
+                            })
                     
-                else:
-                    streaming_logger.warning(f"[CONVERSATION] Unknown message type: {msg_type}")
+                    # Send completion signal
+                    await websocket.send_json({
+                        "type": "streaming_complete",
+                        "chunk_id": chunk_id,
+                        "total_chunks": chunk_counter
+                    })
+                    streaming_logger.info(f"✅ STREAMING complete for {chunk_id}: {chunk_counter} chunks")
                     
-            except asyncio.TimeoutError:
-                streaming_logger.info(f"[CONVERSATION] Client {client_id} timeout - sending ping")
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                streaming_logger.error(f"❌ WebSocket error for {client_id}: {e}")
                 try:
-                    await websocket.send_text(json.dumps({"type": "ping"}))
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "Processing error occurred"
+                    })
                 except:
                     break
                     
     except WebSocketDisconnect:
-        streaming_logger.info(f"[CONVERSATION] Client disconnected: {client_id}")
+        streaming_logger.info(f"[STREAMING] Client disconnected: {client_id}")
     except Exception as e:
-        streaming_logger.error(f"[CONVERSATION] WebSocket error for {client_id}: {e}")
+        streaming_logger.error(f"❌ WebSocket connection error for {client_id}: {e}")
+    finally:
+        streaming_logger.info(f"[STREAMING] Connection closed: {client_id}")
 
-async def handle_conversational_audio_chunk(websocket: WebSocket, data: dict, client_id: str):
-    """Process conversational audio chunks with VAD using unified model manager"""
-    try:
-        chunk_start_time = time.time()
-        chunk_id = data.get("chunk_id", 0)
-        
-        streaming_logger.info(f"[CONVERSATION] Processing chunk {chunk_id} for {client_id}")
-        
-        # Get services from unified manager
-        unified_manager = get_unified_manager()
-        audio_processor = get_audio_processor()
-        performance_monitor = get_performance_monitor()
 
-        # Check if unified manager is initialized
-        if not unified_manager.is_initialized:
-            streaming_logger.error(f"[CONVERSATION] Unified model manager not initialized!")
-            await websocket.send_text(json.dumps({
-                "type": "error",
-                "message": "Models not properly initialized. Please restart the server."
-            }))
-            return
-        
-        # Get models from unified manager
-        try:
-            voxtral_model = await unified_manager.get_voxtral_model()
-            kokoro_model = await unified_manager.get_kokoro_model()
-        except Exception as e:
-            streaming_logger.error(f"[CONVERSATION] Failed to get models: {e}")
-            await websocket.send_text(json.dumps({
-                "type": "error",
-                "message": f"Failed to access models: {str(e)}"
-            }))
-            return
-        
-        audio_b64 = data.get("audio_data")
-        if not audio_b64:
-            return
-        
-        try:
-            audio_bytes = base64.b64decode(audio_b64)
-            audio_array = np.frombuffer(audio_bytes, dtype=np.float32)
-        except Exception as e:
-            streaming_logger.error(f"[CONVERSATION] Audio decoding error for chunk {chunk_id}: {e}")
-            return
-        
-        if not audio_processor.validate_realtime_chunk(audio_array, chunk_id):
-            return
-        
-        try:
-            audio_tensor = audio_processor.preprocess_realtime_chunk(audio_array, chunk_id)
-        except Exception as e:
-            streaming_logger.error(f"[CONVERSATION] Audio preprocessing error for chunk {chunk_id}: {e}")
-            return
-        
-        # Smart Conversation Mode - unified processing with performance monitoring
-        mode = "conversation"  # Always use conversation mode
-        prompt = ""  # Prompt is hardcoded in the model
-        
-        # Start performance timing
-        voxtral_timing_id = performance_monitor.start_timing("voxtral_processing", {
-            "chunk_id": chunk_id,
-            "client_id": client_id,
-            "audio_length": len(audio_array)
-        })
-        
-        try:
-            result = await voxtral_model.process_realtime_chunk(
-                audio_tensor, 
-                chunk_id, 
-                mode=mode, 
-                prompt=prompt
-            )
-            
-            # End Voxtral timing
-            voxtral_processing_time = performance_monitor.end_timing(voxtral_timing_id)
-            
-            if result['success']:
-                response = result['response']
-                processing_time = result['processing_time_ms']
-
-                # Check for response deduplication
-                last_response = recent_responses.get(client_id, "")
-                is_duplicate = response and response.strip() and response == last_response
-
-                if not is_duplicate:
-                    # Send text response first
-                    await websocket.send_text(json.dumps({
-                        "type": "response",
-                        "mode": mode,
-                        "text": response,
-                        "chunk_id": chunk_id,
-                        "processing_time_ms": round(processing_time, 1),
-                        "audio_duration_ms": len(audio_array) / config.audio.sample_rate * 1000,
-                        "timestamp": data.get("timestamp", time.time()),
-                        "skipped_reason": result.get('skipped_reason', None),
-                        "had_speech": result.get('had_speech', True)
-                    }))
-
-                    # Generate TTS audio if we have a meaningful response using Kokoro TTS
-                    if response and response.strip():
-                        try:
-                            # Start TTS timing
-                            tts_timing_id = performance_monitor.start_timing("kokoro_generation", {
-                                "chunk_id": chunk_id,
-                                "text_length": len(response),
-                                "voice": "hf_alpha"  # Heart (Calm & Friendly) voice
-                            })
-
-                            # Generate speech using Kokoro TTS model
-                            result = await kokoro_model.synthesize_speech(
-                                text=response,
-                                voice="hf_alpha"  # Use Heart (Calm & Friendly) voice as default
-                            )
-
-                            if not result.get("success", False):
-                                raise Exception(f"Kokoro TTS generation failed: {result.get('error', 'Unknown error')}")
-
-                            audio_data = result["audio_data"]
-                            sample_rate = result.get("sample_rate", 24000)
-
-                            # End TTS timing
-                            tts_generation_time = performance_monitor.end_timing(tts_timing_id)
-
-                            if audio_data is not None and len(audio_data) > 0:
-                                # Audio quality validation and normalization
-                                audio_rms = np.sqrt(np.mean(audio_data**2))
-                                audio_peak = np.max(np.abs(audio_data))
-
-                                logger.info(f"🎵 Audio quality check - RMS: {audio_rms:.6f}, Peak: {audio_peak:.6f}")
-
-                                # Normalize audio if too quiet or too loud
-                                normalized_audio = audio_data
-                                if audio_rms < 0.05:  # Too quiet
-                                    target_rms = 0.2
-                                    gain = target_rms / (audio_rms + 1e-8)
-                                    normalized_audio = audio_data * gain
-                                    logger.info(f"🔊 Audio boosted by {gain:.2f}x (was too quiet)")
-                                elif audio_peak > 0.95:  # Risk of clipping
-                                    gain = 0.9 / audio_peak
-                                    normalized_audio = audio_data * gain
-                                    logger.info(f"🔉 Audio reduced by {gain:.2f}x (preventing clipping)")
-
-                                # Convert numpy array to proper WAV format with headers
-                                import soundfile as sf
-                                from io import BytesIO
-
-                                # Create WAV file in memory with normalized audio
-                                wav_buffer = BytesIO()
-                                sf.write(wav_buffer, normalized_audio, sample_rate, format='WAV', subtype='PCM_16')
-                                wav_bytes = wav_buffer.getvalue()
-                                wav_buffer.close()
-
-                                # Validate WAV file creation
-                                if len(wav_bytes) < 100:  # WAV header alone is ~44 bytes
-                                    raise Exception(f"WAV file too small: {len(wav_bytes)} bytes")
-
-                                # Verify WAV headers
-                                if wav_bytes[:4] != b'RIFF' or wav_bytes[8:12] != b'WAVE':
-                                    raise Exception("Invalid WAV file headers")
-
-                                logger.info(f"✅ WAV file created: {len(wav_bytes)} bytes with proper headers")
-
-                                # Convert to base64 for transmission
-                                audio_b64 = base64.b64encode(wav_bytes).decode('utf-8')
-
-                                # Calculate audio duration from actual audio samples
-                                audio_duration_ms = (len(audio_data) / sample_rate) * 1000
-
-                                # Send audio response
-                                await websocket.send_text(json.dumps({
-                                    "type": "audio_response",
-                                    "audio_data": audio_b64,
-                                    "chunk_id": chunk_id,
-                                    "voice": "hf_alpha",  # Heart (Calm & Friendly) voice
-                                    "format": "wav",
-                                    "metadata": {
-                                        "audio_duration_ms": audio_duration_ms,
-                                        "generation_time_ms": tts_generation_time,
-                                        "sample_rate": sample_rate,
-                                        "channels": 1,
-                                        "format": "WAV",
-                                        "subtype": "PCM_16"
-                                    }
-                                }))
-                                
-                                streaming_logger.info(f"[TTS-KOKORO] Audio response generated for chunk {chunk_id} in {tts_generation_time:.1f}ms")
-
-                                # Log performance breakdown
-                                performance_monitor.log_latency_breakdown({
-                                    "voxtral_processing_ms": voxtral_processing_time,
-                                    "kokoro_generation_ms": tts_generation_time,
-                                    "audio_conversion_ms": 0,  # Already included in generation
-                                    "total_end_to_end_ms": voxtral_processing_time + tts_generation_time
-                                })
-                                
-                            else:
-                                streaming_logger.warning(f"[TTS-DIRECT] Failed to generate audio for chunk {chunk_id}")
-                                
-                        except Exception as tts_error:
-                            streaming_logger.error(f"[TTS-DIRECT] Error generating audio response: {tts_error}")
-                            # End timing even on error
-                            if 'tts_timing_id' in locals():
-                                performance_monitor.end_timing(tts_timing_id)
-
-                    # Update recent response tracking
-                    if response and response.strip():
-                        recent_responses[client_id] = response
-                        streaming_logger.info(f"[CONVERSATION] Unique response sent for chunk {chunk_id}: '{response[:50]}...'")
-                    else:
-                        streaming_logger.info(f"[CONVERSATION] Silence detected for chunk {chunk_id} - no response needed")
-                else:
-                    streaming_logger.info(f"[CONVERSATION] Duplicate response detected for chunk {chunk_id} - skipping")
-            else:
-                streaming_logger.warning(f"[CONVERSATION] Processing failed for chunk {chunk_id}")
-                
-        except Exception as e:
-            streaming_logger.error(f"[CONVERSATION] Voxtral processing error for chunk {chunk_id}: {e}")
-        
-    except Exception as e:
-        streaming_logger.error(f"[CONVERSATION] Error handling audio chunk: {e}")
 
 async def initialize_models_at_startup():
     """Initialize with ULTRA-FAST mode for <500ms latency"""
