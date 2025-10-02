@@ -1804,38 +1804,32 @@ async def websocket_endpoint(websocket: WebSocket):
                         result = await unified_manager.process_conversation_chunk(audio_data, chunk_id)
                         
                         if result['success'] and result['text'].strip():
-                            # Send text response (WORKING format from logs)
+                            # Send text response (WORKING format from logs[1])
                             await websocket.send_json({
                                 "type": "text_response",
                                 "chunk_id": chunk_id,
                                 "text": result['text'],
                                 "processing_time_ms": result.get('processing_time_ms', 0)
                             })
-                            streaming_logger.info(f"📤 Text sent: '{result['text'][:50]}...'")
+                            streaming_logger.info(f"📤 CONVERSATION Text sent for chunk {chunk_id}: '{result['text'][:50]}...'")
                             
-                            # Generate and send TTS (WORKING approach from logs)
-                            try:
-                                tts_result = await unified_manager.kokoro_model.synthesize_speech(
-                                    text=result['text'],
-                                    chunk_id=f"tts_{chunk_id}"
-                                )
+                            # Send audio response if TTS succeeded (WORKING approach from logs[1])
+                            if result.get('tts_success', False) and len(result.get('audio_data', [])) > 0:
+                                # Encode audio as base64 (WORKING format from logs[1])
+                                audio_bytes = result['audio_data'].astype(np.float32).tobytes()
+                                audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
                                 
-                                if tts_result['success'] and len(tts_result['audio_data']) > 0:
-                                    # Encode audio as base64 (WORKING format from logs)
-                                    audio_bytes = tts_result['audio_data'].astype(np.float32).tobytes()
-                                    audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
-                                    
-                                    await websocket.send_json({
-                                        "type": "audio_response", 
-                                        "chunk_id": chunk_id,
-                                        "audio_data": audio_b64,
-                                        "sample_rate": tts_result['sample_rate'],
-                                        "synthesis_time_ms": tts_result.get('synthesis_time_ms', 0),
-                                        "audio_duration_s": tts_result.get('audio_duration_s', 0)
-                                    })
-                                    streaming_logger.info(f"🎵 TTS-KOKORO Audio response generated for chunk {chunk_id}")
-                            except Exception as tts_error:
-                                streaming_logger.error(f"❌ TTS error for chunk {chunk_id}: {tts_error}")
+                                await websocket.send_json({
+                                    "type": "audio_response", 
+                                    "chunk_id": chunk_id,
+                                    "audio_data": audio_b64,
+                                    "sample_rate": result['sample_rate'],
+                                    "synthesis_time_ms": result.get('tts_time_ms', 0),
+                                    "audio_duration_s": result.get('audio_duration_s', 0)
+                                })
+                                streaming_logger.info(f"🎵 TTS-KOKORO Audio response generated for chunk {chunk_id}")
+                            
+                            streaming_logger.info(f"✅ CONVERSATION Unique response sent for chunk {chunk_id}")
                         else:
                             # Send error response
                             await websocket.send_json({

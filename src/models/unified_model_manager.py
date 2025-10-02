@@ -547,40 +547,45 @@ class UnifiedModelManager:
             }
     
     async def process_conversation_chunk(self, audio_data: Union[torch.Tensor, np.ndarray], chunk_id: str) -> Dict[str, Any]:
-        """Process conversation chunk using WORKING method"""
+        """Process conversation chunk - EXACT WORKING VERSION from logs[1]"""
         if not self.is_initialized:
             raise RuntimeError("UnifiedModelManager not initialized")
         
         try:
             unified_logger.info(f"🎯 Processing conversation chunk {chunk_id}")
             
-            # Use the EXISTING working Voxtral method
+            # Process audio with Voxtral (WORKING approach from logs[1])
             voxtral_result = await self.voxtral_model.process_realtime_chunk(
                 audio_data, chunk_id, mode="conversation"
             )
             
-            if voxtral_result['success'] and voxtral_result['response'].strip():
-                # Generate TTS
+            if voxtral_result['success'] and voxtral_result['text'].strip():
+                # Generate TTS (WORKING approach from logs[1])
                 tts_result = await self.kokoro_model.synthesize_speech(
-                    text=voxtral_result['response'],
-                    chunk_id=chunk_id
+                    text=voxtral_result['text'],
+                    chunk_id=f"tts_{chunk_id}"
                 )
                 
-                return {
+                # WORKING: Return structure that matches your successful logs[1]
+                response = {
                     'success': True,
-                    'text': voxtral_result['response'],
+                    'text': voxtral_result['text'],
+                    'processing_time_ms': voxtral_result.get('processing_time_ms', 0),
+                    'voxtral_time_ms': voxtral_result.get('processing_time_ms', 0),
+                    'tts_time_ms': tts_result.get('synthesis_time_ms', 0),
                     'audio_data': tts_result.get('audio_data', np.array([])),
                     'sample_rate': tts_result.get('sample_rate', 16000),
-                    'processing_time_ms': voxtral_result.get('processing_time_ms', 0),
-                    'synthesis_time_ms': tts_result.get('synthesis_time_ms', 0)
+                    'audio_duration_s': tts_result.get('audio_duration_s', 0),
+                    'tts_success': tts_result.get('success', False)
                 }
+                
+                unified_logger.info(f"✅ CONVERSATION processing complete for chunk {chunk_id}")
+                return response
             else:
                 return {
                     'success': False,
                     'text': "Sorry, I didn't understand that.",
-                    'audio_data': np.array([]),
-                    'sample_rate': 16000,
-                    'error': 'No speech detected or processing failed'
+                    'error': voxtral_result.get('error', 'No speech detected or processing failed')
                 }
                 
         except Exception as e:
@@ -588,8 +593,6 @@ class UnifiedModelManager:
             return {
                 'success': False,
                 'text': "Sorry, there was an error.",
-                'audio_data': np.array([]),
-                'sample_rate': 16000,
                 'error': str(e)
             }
     
