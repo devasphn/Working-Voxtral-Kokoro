@@ -174,69 +174,41 @@ class VoxtralModel:
             return "eager"
     
     def _calculate_audio_energy(self, audio_data: np.ndarray) -> float:
-        """
-        Calculate RMS energy of audio signal for VAD
-        """
-        try:
-            # Calculate RMS (Root Mean Square) energy
-            rms_energy = np.sqrt(np.mean(audio_data ** 2))
-            return float(rms_energy)
-        except Exception as e:
-            realtime_logger.warning(f"Error calculating audio energy: {e}")
-            return 0.0
+        """Calculate RMS energy of audio data"""
+        return np.sqrt(np.mean(audio_data ** 2))
     
     def _is_speech_detected(self, audio_data: np.ndarray, duration_s: float) -> bool:
-        """ENHANCED VAD: Multi-parameter speech detection"""
+        """Enhanced speech detection with multiple criteria"""
         try:
-            # Basic energy check
-            energy = self._calculate_audio_energy(audio_data)
-            if energy < self.silence_threshold:
-                realtime_logger.debug(f"🔇 Low energy ({energy:.6f}) - likely silence")
+            # Calculate RMS energy
+            rms_energy = self._calculate_audio_energy(audio_data)
+            
+            # Check against silence threshold
+            if rms_energy < self.silence_threshold:
+                realtime_logger.debug(f"Audio energy {rms_energy:.6f} below silence threshold {self.silence_threshold}")
                 return False
             
-            # Duration check
+            # Check minimum duration
             if duration_s < self.min_speech_duration:
-                realtime_logger.debug(f"⏱️ Too short ({duration_s:.2f}s) - likely noise")
+                realtime_logger.debug(f"Duration {duration_s:.2f}s below minimum {self.min_speech_duration}s")
                 return False
             
-            # ENHANCED: Spectral characteristics for better accuracy
-            try:
-                # Calculate spectral features using librosa
-                import librosa
-                
-                # Spectral rolloff (frequency distribution)
-                rolloff = librosa.feature.spectral_rolloff(y=audio_data, sr=config.audio.sample_rate)[0]
-                avg_rolloff = np.mean(rolloff) / (config.audio.sample_rate / 2)  # Normalize
-                
-                # Zero crossing rate (speech vs noise)
-                zcr = librosa.feature.zero_crossing_rate(audio_data)[0]
-                avg_zcr = np.mean(zcr)
-                
-                # Speech characteristics check
-                if avg_rolloff > self.spectral_rolloff_threshold:
-                    realtime_logger.debug(f"📊 High spectral rolloff ({avg_rolloff:.3f}) - likely not speech")
-                    return False
-                
-                if avg_zcr > self.zero_crossing_rate_threshold:
-                    realtime_logger.debug(f"📈 High ZCR ({avg_zcr:.3f}) - likely noise")
-                    return False
-                
-                realtime_logger.debug(f"🎙️ SPEECH DETECTED - Energy: {energy:.6f}, Rolloff: {avg_rolloff:.3f}, ZCR: {avg_zcr:.3f}")
-                return True
-                
-            except ImportError:
-                # Fallback to basic detection if librosa features not available
-                spectral_variation = np.std(audio_data)
-                if spectral_variation < self.silence_threshold * 0.3:
-                    realtime_logger.debug(f"📊 Low variation ({spectral_variation:.6f}) - likely silence")
-                    return False
-                
-                realtime_logger.debug(f"🎙️ Speech detected - Energy: {energy:.6f}, Variation: {spectral_variation:.6f}")
-                return True
-                
+            # Additional checks for better detection
+            max_amplitude = np.max(np.abs(audio_data))
+            if max_amplitude < 0.001:  # Very quiet
+                return False
+            
+            # Check for variation (not flat signal)
+            variation = np.std(audio_data)
+            if variation < 0.001:  # Too flat, likely silence
+                return False
+            
+            realtime_logger.debug(f"✅ Speech detected - Energy: {rms_energy:.6f}, Duration: {duration_s:.2f}s, Variation: {variation:.6f}")
+            return True
+            
         except Exception as e:
-            realtime_logger.error(f"❌ VAD error: {e}")
-            return False  # Conservative: reject on error
+            realtime_logger.error(f"❌ Speech detection error: {e}")
+            return False
     
     def _create_ultra_short_prompt(self) -> str:
         """ULTRA-SHORT prompt for <500ms responses"""
@@ -270,13 +242,11 @@ class VoxtralModel:
                 "low_cpu_mem_usage": True,
                 "trust_remote_code": True,
                 "attn_implementation": attn_implementation,
-                # ADDED: Ultra-aggressive optimizations
-                "use_flash_attention_2": True if attn_implementation == "flash_attention_2" else False,
-                "torch_compile": False,  # Disable for FlashAttention2 compatibility
+                # REMOVED: Invalid parameters that cause errors
+                # "use_flash_attention_2": True,  # REMOVED - not supported
+                # "torch_compile": False,         # REMOVED - not needed
                 "max_memory": {0: "8GB"},  # Limit VRAM usage
-                "offload_folder": None,  # Keep everything on GPU
-                "load_in_8bit": False,     # Don't use 8-bit (causes slowdown)
-                "load_in_4bit": False,     # Don't use 4-bit (unstable)
+                "offload_folder": None,    # Keep everything on GPU
             }
             
             # Try quantization if available
@@ -320,8 +290,11 @@ class VoxtralModel:
                 
                 realtime_logger.info("⚡ ULTRA-OPTIMIZED PyTorch settings enabled")
             
-            # DISABLED: Skip torch.compile (conflicts with FlashAttention2)
-            realtime_logger.info("💡 Skipping torch.compile (using FlashAttention2 + quantization)")
+            # Log FlashAttention2 status
+            if attn_implementation == "flash_attention_2":
+                realtime_logger.info("✅ Using FlashAttention2 for optimal speed")
+            else:
+                realtime_logger.info(f"💡 Using {attn_implementation} attention (FlashAttention2 not available)")
             
             self.is_initialized = True
             init_time = time.time() - start_time

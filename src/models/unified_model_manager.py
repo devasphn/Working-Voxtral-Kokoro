@@ -111,13 +111,16 @@ class UnifiedModelManager:
             unified_logger.info("🔥 Warming up models for ultra-fast performance...")
             
             # Enable ultra-fast mode
-            self.gpu_memory_manager.enable_ultra_fast_mode()
+            warmup_success = self.gpu_memory_manager.enable_ultra_fast_mode()
+            if not warmup_success:
+                unified_logger.warning("⚠️ Ultra-fast mode setup had issues but continuing...")
             
             # Warmup Voxtral with progressively smaller inputs
             warmup_audio_lengths = [8000, 4000, 2000, 1000]  # 0.5s to 0.0625s
             for i, length in enumerate(warmup_audio_lengths):
                 dummy_audio = torch.randn(length, device=self.gpu_memory_manager.device, dtype=torch.float16) * 0.1
                 start_time = time.time()
+                # Use the existing process_realtime_chunk method
                 result = await self.voxtral_model.process_realtime_chunk(
                     dummy_audio, 
                     chunk_id=f"warmup_{i}",
