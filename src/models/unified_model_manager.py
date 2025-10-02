@@ -11,7 +11,7 @@ from threading import Lock
 from contextlib import asynccontextmanager
 import torch
 import gc
-
+import numpy as np
 # Import model classes
 from src.models.voxtral_model_realtime import VoxtralModel
 from src.models.kokoro_model_realtime import KokoroTTSModel
