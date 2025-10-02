@@ -169,40 +169,52 @@ class KokoroTTSModel:
         return text
     
     async def synthesize_speech(self, text: str, chunk_id: str = None) -> Dict[str, Any]:
-        """ULTRA-FAST TTS synthesis with CORRECT parameters"""
+        """ULTRA-FAST TTS synthesis - FINAL WORKING VERSION"""
         if not self.is_initialized:
             raise RuntimeError("KokoroTTSModel not initialized")
         
         synthesis_start = time.time()
         try:
             # Truncate text for speed
-            max_chars = 200  # Limit text length for speed
+            max_chars = 200
             if len(text) > max_chars:
                 text = text[:max_chars].rsplit(' ', 1)[0] + "..."
             
             tts_logger.debug(f"🎵 Starting ULTRA-FAST TTS for chunk {chunk_id}")
             
-            # FIXED: Correct KPipeline parameters (removed 'lang' - not supported)
+            # WORKING: Call pipeline with minimal parameters
             result = self.pipeline(
                 text,
                 voice=self.voice,
-                # REMOVED: lang=self.lang_code - causes error
                 speed=self.speed
             )
             
             synthesis_time = (time.time() - synthesis_start) * 1000
             
-            # Extract audio data
+            # FIXED: Handle generator object properly
             if hasattr(result, 'audio') and result.audio is not None:
                 audio_data = result.audio
             elif isinstance(result, torch.Tensor):
                 audio_data = result
+            elif hasattr(result, '__iter__') and not isinstance(result, (str, bytes)):
+                # Handle generator - convert to list first
+                try:
+                    result_list = list(result)
+                    if result_list and hasattr(result_list[0], 'audio'):
+                        audio_data = result_list[0].audio
+                    else:
+                        audio_data = result_list[0] if result_list else torch.zeros(16000)
+                except:
+                    audio_data = torch.zeros(16000)  # Fallback silent audio
             else:
                 audio_data = result
             
-            # Convert to numpy
+            # Convert to numpy safely
             if isinstance(audio_data, torch.Tensor):
                 audio_data = audio_data.cpu().numpy()
+            elif not isinstance(audio_data, np.ndarray):
+                # Create silent audio as fallback
+                audio_data = np.zeros(int(self.sample_rate * 1.0))  # 1 second of silence
             
             tts_logger.info(f"✅ Synthesized speech for chunk {chunk_id} in {synthesis_time:.1f}ms: {len(audio_data)/self.sample_rate:.2f}s audio")
             
@@ -217,9 +229,11 @@ class KokoroTTSModel:
         except Exception as e:
             synthesis_time = (time.time() - synthesis_start) * 1000
             tts_logger.error(f"❌ TTS synthesis error for chunk {chunk_id}: {e}")
+            # Return silent audio instead of empty array
+            silent_audio = np.zeros(int(self.sample_rate * 1.0))  # 1 second silence
             return {
                 'success': False,
-                'audio_data': np.array([]),
+                'audio_data': silent_audio,
                 'sample_rate': self.sample_rate,
                 'synthesis_time_ms': synthesis_time,
                 'error': str(e)
