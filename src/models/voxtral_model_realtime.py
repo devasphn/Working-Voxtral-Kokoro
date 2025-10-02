@@ -304,207 +304,101 @@ class VoxtralModel:
             realtime_logger.error(f"❌ Ultra-low latency initialization failed: {e}")
             raise
     
-    async def process_realtime_chunk(self, audio_data: torch.Tensor, chunk_id: int, mode: str = "conversation", prompt: str = "") -> Dict[str, Any]:
-        """
-        PRODUCTION-READY processing for conversational real-time audio chunks with VAD
-        """
+    async def process_realtime_chunk(self, audio_data: Union[torch.Tensor, np.ndarray], chunk_id: str, mode: str = "conversation") -> Dict[str, Any]:
+        """Process real-time audio chunk with CORRECT data handling"""
         if not self.is_initialized:
-            raise RuntimeError("Model not initialized. Call initialize() first.")
+            raise RuntimeError("VoxtralModel not initialized")
+        
+        chunk_start_time = time.time()
+        realtime_logger.debug(f"🎵 Processing conversational chunk {chunk_id} with {len(audio_data)} samples")
         
         try:
-            chunk_start_time = time.time()
-            realtime_logger.debug(f"🎵 Processing conversational chunk {chunk_id} with {len(audio_data)} samples")
+            # CRITICAL: Correct audio data type conversion
+            if isinstance(audio_data, torch.Tensor):
+                # Convert tensor to numpy FIRST, then ensure float32
+                if audio_data.requires_grad:
+                    audio_numpy = audio_data.detach().cpu().numpy().astype(np.float32)
+                else:
+                    audio_numpy = audio_data.cpu().numpy().astype(np.float32)
+            elif isinstance(audio_data, np.ndarray):
+                # Ensure numpy array is float32 (NOT float16)
+                audio_numpy = audio_data.astype(np.float32)
+            else:
+                raise ValueError(f"Unsupported audio data type: {type(audio_data)}")
             
-            # Convert tensor to numpy for VAD analysis
-            audio_np = audio_data.detach().cpu().numpy().copy()
-            sample_rate = config.audio.sample_rate
-            duration_s = len(audio_np) / sample_rate
-            
-            # CRITICAL: Apply VAD before processing
-            if not self._is_speech_detected(audio_np, duration_s):
-                realtime_logger.debug(f"🔇 Chunk {chunk_id} contains no speech - skipping processing")
+            # Validate audio
+            if not self._is_speech_detected(audio_numpy, len(audio_numpy) / config.audio.sample_rate):
                 return {
-                    'response': '',  # Empty response for silence
+                    'success': False,
+                    'response': '',
                     'processing_time_ms': (time.time() - chunk_start_time) * 1000,
-                    'chunk_id': chunk_id,
-                    'audio_duration_s': duration_s,
-                    'success': True,
-                    'is_silence': True
+                    'error': 'No speech detected'
                 }
             
-            with self.model_lock:
-                # Store chunk in recent history
-                self.recent_chunks.append({
-                    'chunk_id': chunk_id,
-                    'timestamp': chunk_start_time,
-                    'has_speech': True
-                })
-                
-                # Ensure audio_data is properly formatted
-                if not audio_data.data.is_contiguous():
-                    audio_data = audio_data.contiguous()
-                
-                realtime_logger.debug(f"🔊 Audio stats for chunk {chunk_id}: length={len(audio_np)}, max_val={np.max(np.abs(audio_np)):.4f}")
-                
-                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
-                    try:
-                        # Write audio to temporary file
-                        sf.write(tmp_file.name, audio_np, sample_rate)
-                        realtime_logger.debug(f"💾 Written chunk {chunk_id} to temporary file: {tmp_file.name}")
-                        
-                        # Load using mistral_common Audio with updated API
-                        audio = Audio.from_file(tmp_file.name)
-                        audio_chunk = AudioChunk.from_audio(audio)
-                        
-                        # REPLACE the conversation_prompt in process_realtime_chunk:
-                        conversation_prompt = self._create_ultra_short_prompt()
-                        
-                        # Create message format using updated API
-                        text_chunk = TextChunk(text=conversation_prompt)
-                        user_message = UserMessage(content=[audio_chunk, text_chunk])
-                        
-                        # Convert to chat format for processor
-                        messages = [user_message.model_dump()]
-                        
-                        # Process inputs with updated API
-                        inputs = self.processor.apply_chat_template(messages, return_tensors="pt")
-                        
-                        # Move to device
-                        if hasattr(inputs, 'to'):
-                            inputs = inputs.to(self.device)
-                        elif isinstance(inputs, dict):
-                            inputs = {k: v.to(self.device) if hasattr(v, 'to') else v 
-                                    for k, v in inputs.items()}
-                        
-                        # ULTRA-LOW LATENCY inference with aggressive settings
-                        realtime_logger.debug(f"🚀 Starting ULTRA-FAST inference for chunk {chunk_id}")
-                        inference_start = time.time()
-                        
-                        with torch.no_grad():
-                            # CRITICAL: Use aggressive mixed precision
-                            with torch.autocast(device_type="cuda",
-                                               dtype=torch.float16,  # Force float16 for maximum speed
-                                               enabled=True):
-                                # ULTRA-AGGRESSIVE generation parameters for <500ms total
-                                outputs = self.model.generate(
-                                    **inputs,
-                                    max_new_tokens=50,      # ULTRA-REDUCED: Cut by 75% (was 200)
-                                    min_new_tokens=1,       # ULTRA-REDUCED: Minimum viable (was 5)
-                                    do_sample=False,        # DISABLED: Deterministic for speed (was True)
-                                    num_beams=1,           # Single beam (fastest)
-                                    temperature=None,       # DISABLED: Deterministic mode
-                                    top_p=None,            # DISABLED: Deterministic mode
-                                    repetition_penalty=1.0, # DISABLED: No penalty processing
-                                    pad_token_id=self.processor.tokenizer.eos_token_id if hasattr(self.processor, 'tokenizer') else None,
-                                    use_cache=True,
-                                    # ULTRA-AGGRESSIVE: Force early stopping
-                                    early_stopping=True,    # ENABLED: Stop as soon as possible
-                                    length_penalty=0.8,     # STRONG: Prefer shorter responses
-                                    no_repeat_ngram_size=2, # REDUCED: Faster processing (was 3)
-                                    # ADDED: Advanced speed optimizations
-                                    output_scores=False,    # DISABLED: Skip score computation
-                                    return_dict_in_generate=False,  # DISABLED: Skip dict creation
-                                    synced_gpus=False,      # DISABLED: Single GPU optimization
-                                    # CRITICAL: Set explicit stopping criteria
-                                    eos_token_id=self.processor.tokenizer.eos_token_id if hasattr(self.processor, 'tokenizer') else None,
-                                )
-                        
-                        inference_time = (time.time() - inference_start) * 1000
-                        realtime_logger.debug(f"⚡ Inference completed for chunk {chunk_id} in {inference_time:.1f}ms")
-                        
-                        # Decode response
-                        if hasattr(inputs, 'input_ids'):
-                            input_length = inputs.input_ids.shape[1]
-                        elif 'input_ids' in inputs:
-                            input_length = inputs['input_ids'].shape[1]
-                        else:
-                            input_length = 0
-                            
-                        response = self.processor.batch_decode(
-                            outputs[:, input_length:], 
-                            skip_special_tokens=True
-                        )[0]
-                        
-                        total_processing_time = (time.time() - chunk_start_time) * 1000
-                        
-                        # Store performance metrics
-                        performance_data = {
-                            'chunk_id': chunk_id,
-                            'total_time_ms': total_processing_time,
-                            'inference_time_ms': inference_time,
-                            'audio_length_s': len(audio_np) / sample_rate,
-                            'response_length': len(response),
-                            'timestamp': chunk_start_time,
-                            'has_speech': True
-                        }
-                        self.processing_history.append(performance_data)
-                        
-                        # Clean and optimize response
-                        cleaned_response = response.strip()
-                        
-                        # Filter out common noise responses
-                        noise_responses = [
-                            "I'm not sure what you're asking",
-                            "I can't understand",
-                            "Could you repeat that",
-                            "I didn't catch that",
-                            "Yeah, I think it's a good idea"  # This seems to be a common noise response
-                        ]
-                        
-                        # If response is too short or matches noise patterns, treat as silence
-                        if len(cleaned_response) < 3 or any(noise in cleaned_response for noise in noise_responses):
-                            realtime_logger.debug(f"🔇 Filtering out noise response: '{cleaned_response}'")
-                            return {
-                                'response': '',
-                                'processing_time_ms': total_processing_time,
-                                'chunk_id': chunk_id,
-                                'audio_duration_s': duration_s,
-                                'success': True,
-                                'is_silence': True,
-                                'filtered_response': cleaned_response
-                            }
-                        
-                        if not cleaned_response:
-                            cleaned_response = "[Audio processed]"
-                        
-                        realtime_logger.info(f"✅ Chunk {chunk_id} processed in {total_processing_time:.1f}ms: '{cleaned_response[:50]}{'...' if len(cleaned_response) > 50 else ''}'")
-                        
-                        return {
-                            'response': cleaned_response,
-                            'processing_time_ms': total_processing_time,
-                            'inference_time_ms': inference_time,
-                            'chunk_id': chunk_id,
-                            'audio_duration_s': len(audio_np) / sample_rate,
-                            'success': True,
-                            'is_silence': False
-                        }
-                        
-                    finally:
-                        # Cleanup temporary file
-                        try:
-                            os.unlink(tmp_file.name)
-                        except:
-                            pass
-                
-        except Exception as e:
-            processing_time = (time.time() - chunk_start_time) * 1000
-            realtime_logger.error(f"❌ Error processing chunk {chunk_id}: {e}")
+            realtime_logger.debug(f"🔊 Audio stats for chunk {chunk_id}: length={len(audio_numpy)}, max_val={np.max(np.abs(audio_numpy)):.4f}")
             
-            # Return error response with timing info
-            error_msg = "Could not process audio"
-            if "CUDA out of memory" in str(e):
-                error_msg = "GPU memory error"
-            elif "timeout" in str(e).lower():
-                error_msg = "Processing timeout"
+            # Create conversation prompt
+            conversation_prompt = self._create_conversation_prompt()
+            
+            # VERIFIED: Correct processor call based on Voxtral documentation
+            realtime_logger.debug(f"🔊 Starting inference for chunk {chunk_id}")
+            inference_start = time.time()
+            
+            # CRITICAL: Use correct parameters from official docs
+            inputs = self.processor(
+                audio=audio_numpy,  # CORRECT: Use 'audio' parameter (verified from docs)
+                text=conversation_prompt,
+                sampling_rate=config.audio.sample_rate,
+                return_tensors="pt"
+                # REMOVED: All unsupported parameters
+            ).to(self.device)
+            
+            # Generate response with aggressive optimization
+            with torch.no_grad():
+                with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=True):
+                    outputs = self.model.generate(
+                        **inputs,
+                        max_new_tokens=30,        # ULTRA-SHORT for speed
+                        min_new_tokens=1,
+                        do_sample=False,          # Deterministic for speed
+                        num_beams=1,             # Single beam
+                        temperature=None,         # Disabled
+                        top_p=None,              # Disabled
+                        pad_token_id=self.processor.tokenizer.eos_token_id,
+                        use_cache=True,
+                        early_stopping=True,
+                    )
+            
+            inference_time = (time.time() - inference_start) * 1000
+            realtime_logger.debug(f"⚡ Inference completed for chunk {chunk_id} in {inference_time:.1f}ms")
+            
+            # Decode response
+            response_ids = outputs[0][inputs['input_ids'].shape[1]:]
+            response_text = self.processor.tokenizer.decode(response_ids, skip_special_tokens=True).strip()
+            
+            total_time = (time.time() - chunk_start_time) * 1000
+            realtime_logger.info(f"✅ Chunk {chunk_id} processed in {total_time:.1f}ms: '{response_text[:50]}...'")
             
             return {
-                'response': error_msg,
-                'processing_time_ms': processing_time,
-                'chunk_id': chunk_id,
-                'success': False,
-                'error': str(e),
-                'is_silence': False
+                'success': True,
+                'response': response_text,
+                'processing_time_ms': total_time,
+                'inference_time_ms': inference_time
             }
+            
+        except Exception as e:
+            error_time = (time.time() - chunk_start_time) * 1000
+            realtime_logger.error(f"❌ Error processing chunk {chunk_id}: {e}")
+            return {
+                'success': False,
+                'response': "Sorry, I didn't understand that.",
+                'processing_time_ms': error_time,
+                'error': str(e)
+            }
+    
+    def _create_conversation_prompt(self) -> str:
+        """Create optimized conversation prompt"""
+        return "You are a helpful AI assistant. Respond briefly and naturally to the user's speech."
 
     async def transcribe_audio(self, audio_data: torch.Tensor) -> str:
         """Unified conversational processing (legacy method)"""

@@ -17,10 +17,10 @@ model:
 
 audio:
   sample_rate: 16000
-  chunk_size: 1024 # OPTIMIZED: Good balance
-  format: "int16"
+  chunk_size: 1024
+  format: "float32"      # CRITICAL: Audio data must be float32
   channels: 1
-  frame_duration_ms: 20 # FAST: 2x faster than before
+  frame_duration_ms: 20
 
 # ULTRA-AGGRESSIVE VAD for <500ms
 vad:
