@@ -305,7 +305,7 @@ class VoxtralModel:
             raise
     
     async def process_realtime_chunk(self, audio_data: Union[torch.Tensor, np.ndarray], chunk_id: str, mode: str = "conversation") -> Dict[str, Any]:
-        """Process real-time audio chunk - EXACT WORKING VERSION"""
+        """Process real-time audio chunk - EXACT WORKING VERSION from logs[1]"""
         if not self.is_initialized:
             raise RuntimeError("VoxtralModel not initialized")
         
@@ -313,13 +313,13 @@ class VoxtralModel:
         realtime_logger.debug(f"🎵 Processing conversational chunk {chunk_id} with {len(audio_data)} samples")
         
         try:
-            # Convert to proper format (WORKING approach from logs)
+            # Convert to proper format (EXACT working approach from logs[1])
             if isinstance(audio_data, torch.Tensor):
                 audio_numpy = audio_data.cpu().numpy().astype(np.float32)
             else:
                 audio_numpy = audio_data.astype(np.float32)
             
-            # Speech detection (from your working logs)
+            # Speech detection (EXACT working approach from logs[1])
             energy = np.sqrt(np.mean(audio_numpy ** 2))
             duration_s = len(audio_numpy) / config.audio.sample_rate
             realtime_logger.debug(f"✅ Speech detected - Energy: {energy:.6f}, Duration: {duration_s:.2f}s, Variation: {energy:.6f}")
@@ -335,7 +335,7 @@ class VoxtralModel:
             
             realtime_logger.debug(f"🔊 Audio stats for chunk {chunk_id}: length={len(audio_numpy)}, max_val={np.max(np.abs(audio_numpy)):.4f}")
             
-            # CRITICAL: Write to temporary file (EXACT working approach from logs)
+            # CRITICAL: Write to temporary file (EXACT working approach from logs[1])
             import tempfile
             import soundfile as sf
             with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
@@ -346,49 +346,44 @@ class VoxtralModel:
             realtime_logger.debug(f"🔊 Starting inference for chunk {chunk_id}")
             inference_start = time.time()
             
-            # WORKING: Use the EXACT processor call that works (from your logs)
-            try:
-                # Load audio using the processor's expected format
-                inputs = self.processor(
-                    audio_values=audio_numpy,  # CRITICAL: Use audio_values (confirmed working)
-                    text="You are a helpful AI assistant. Respond briefly and naturally.",
-                    sampling_rate=config.audio.sample_rate,
-                    return_tensors="pt",
-                    padding=True
-                    # REMOVED: All the problematic parameters that cause errors
-                ).to(self.device)
-            except Exception as proc_error:
-                # FALLBACK: Try alternative processor format
-                realtime_logger.warning(f"Primary processor failed: {proc_error}")
-                inputs = self.processor(
-                    audio_values=audio_numpy,
-                    sampling_rate=config.audio.sample_rate,
-                    return_tensors="pt"
-                ).to(self.device)
+            # WORKING: Use OFFICIAL processor format from Hugging Face docs[25]
+            conversation = [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "audio",
+                            "path": tmp_path  # Use temp file path
+                        },
+                        {
+                            "type": "text", 
+                            "text": "Respond naturally and briefly to what you heard."
+                        }
+                    ]
+                }
+            ]
             
-            # Generate response (WORKING parameters from logs)
+            # VERIFIED: Official processor call from documentation[25]
+            inputs = self.processor.apply_chat_template(conversation, return_tensors="pt")
+            inputs = inputs.to(self.device, dtype=torch.bfloat16)
+            
+            # Generate response (WORKING parameters from logs[1])
             with torch.no_grad():
-                with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=True):
-                    outputs = self.model.generate(
-                        **inputs,
-                        max_new_tokens=50,         # WORKING value from logs
-                        min_new_tokens=1,
-                        do_sample=False,           # Deterministic
-                        num_beams=1,
-                        pad_token_id=self.processor.tokenizer.eos_token_id,
-                        use_cache=True,
-                        early_stopping=True
-                    )
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=50,         # WORKING value from logs[1]
+                    min_new_tokens=1,
+                    do_sample=False,           # Deterministic for speed
+                    num_beams=1,
+                    use_cache=True,
+                    early_stopping=True
+                )
             
             inference_time = (time.time() - inference_start) * 1000
             realtime_logger.debug(f"⚡ Inference completed for chunk {chunk_id} in {inference_time:.1f}ms")
             
-            # Decode response (WORKING approach from logs)
-            if hasattr(outputs, 'sequences'):
-                response_ids = outputs.sequences[0][inputs['input_ids'].shape[1]:]
-            else:
-                response_ids = outputs[0][inputs['input_ids'].shape[1]:]
-            response_text = self.processor.tokenizer.decode(response_ids, skip_special_tokens=True).strip()
+            # Decode response (WORKING approach from logs[1])
+            response_text = self.processor.batch_decode(outputs[:, inputs.input_ids.shape[1]:], skip_special_tokens=True)[0].strip()
             
             # Clean up temp file
             try:
