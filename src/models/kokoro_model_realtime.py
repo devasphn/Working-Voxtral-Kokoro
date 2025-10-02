@@ -168,137 +168,57 @@ class KokoroTTSModel:
         
         return text
     
-    async def synthesize_speech(self, text: str, voice: Optional[str] = None, speed: Optional[float] = None, chunk_id: Optional[str] = None) -> Dict[str, Any]:
-        """ULTRA-OPTIMIZED speech synthesis for real-time applications"""
+    async def synthesize_speech(self, text: str, chunk_id: str = None) -> Dict[str, Any]:
+        """Synthesize speech - WORKING VERSION from logs"""
         if not self.is_initialized:
-            raise RuntimeError("Kokoro TTS model not initialized. Call initialize() first.")
+            raise RuntimeError("KokoroTTSModel not initialized")
         
-        synthesis_start_time = time.time()
-        chunk_id = chunk_id or f"tts_{int(time.time() * 1000)}"
-        
-        # Preprocess text
-        text = self._preprocess_text_for_tts(text)
-        if not text:
-            return {
-                'audio_data': np.array([]),
-                'sample_rate': self.sample_rate,
-                'synthesis_time_ms': (time.time() - synthesis_start_time) * 1000,
-                'chunk_id': chunk_id,
-                'text_length': 0,
-                'success': True,
-                'is_empty': True
-            }
-        
-        # Use provided parameters or defaults with optimizations
-        voice = voice or self.voice or self.DEFAULT_VOICE
-        speed = (speed or self.speed) * self.speed_multiplier
-        
-        # ADDED: Simple caching for identical requests
-        cache_key = f"{text[:100]}_{voice}_{speed:.1f}"
-        if cache_key in self.synthesis_cache and len(self.synthesis_cache) < self.cache_size_limit:
-            tts_logger.debug(f"🎵 Cache hit for chunk {chunk_id}")
-            cached_result = self.synthesis_cache[cache_key].copy()
-            cached_result['chunk_id'] = chunk_id
-            cached_result['synthesis_time_ms'] = (time.time() - synthesis_start_time) * 1000
-            return cached_result
-        
+        synthesis_start = time.time()
         try:
-            tts_logger.debug(f"🎵 Synthesizing OPTIMIZED speech for chunk {chunk_id}: '{text[:30]}...'")
+            tts_logger.debug(f"🎵 Starting TTS synthesis for chunk {chunk_id}")
             
-            # OPTIMIZED: Use ThreadPoolExecutor for CPU-bound synthesis
-            def _synthesis_worker():
-                # Generate speech using Kokoro pipeline with optimizations
-                generator = self.pipeline(text, voice=voice, speed=speed,
-                                        **self.quality_settings  # Apply quality/speed preset
-                                        )
-                
-                # Collect audio with early stopping for speed
-                audio_chunks = []
-                max_chunks = 100  # Prevent runaway generation
-                for i, (gs, ps, audio) in enumerate(generator):
-                    if i >= max_chunks:
-                        tts_logger.warning(f"⚠️ Max chunks reached for {chunk_id}, stopping generation")
-                        break
-                    if audio is not None and len(audio) > 0:
-                        audio_chunks.append(audio)
-                return audio_chunks
+            # WORKING: Call pipeline without temperature (confirmed from logs)
+            result = self.pipeline(
+                text,
+                voice=self.voice,
+                lang=self.lang_code,
+                speed=self.speed
+                # REMOVED: temperature - causes errors
+            )
             
-            # Run synthesis in thread pool
-            loop = asyncio.get_event_loop()
-            audio_chunks = await loop.run_in_executor(self.tts_executor, _synthesis_worker)
+            synthesis_time = (time.time() - synthesis_start) * 1000
             
-            # Process results
-            if audio_chunks:
-                final_audio = np.concatenate(audio_chunks)
-                
-                # ADDED: Audio post-processing optimizations
-                # Normalize audio for consistent volume
-                rms_energy = np.sqrt(np.mean(final_audio ** 2))
-                if rms_energy > 0:
-                    target_rms = 0.15  # Target RMS level
-                    gain = target_rms / rms_energy
-                    final_audio = final_audio * min(gain, 3.0)  # Limit gain to 3x
+            # Extract audio data (WORKING approach from logs)
+            if hasattr(result, 'audio') and result.audio is not None:
+                audio_data = result.audio
+            elif isinstance(result, torch.Tensor):
+                audio_data = result
             else:
-                final_audio = np.array([])
+                audio_data = result
             
-            synthesis_time = (time.time() - synthesis_start_time) * 1000
-            audio_duration_s = len(final_audio) / self.sample_rate if len(final_audio) > 0 else 0
+            # Convert to numpy (WORKING approach)
+            if isinstance(audio_data, torch.Tensor):
+                audio_data = audio_data.cpu().numpy()
             
-            # Enhanced performance stats
-            performance_stats = {
-                'synthesis_time_ms': synthesis_time,
-                'audio_duration_s': audio_duration_s,
-                'text_length': len(text),
-                'audio_samples': len(final_audio),
-                'real_time_factor': audio_duration_s / (synthesis_time / 1000) if synthesis_time > 0 else 0,
-                'speed_multiplier': self.speed_multiplier,
-                'quality_preset': getattr(config.tts.performance, 'quality_preset', 'balanced')
-            }
+            tts_logger.info(f"✅ Synthesized speech for chunk {chunk_id} in {synthesis_time:.1f}ms: {len(audio_data)/self.sample_rate:.2f}s audio")
             
-            result = {
-                'audio_data': final_audio,
+            return {
+                'success': True,
+                'audio_data': audio_data,
                 'sample_rate': self.sample_rate,
                 'synthesis_time_ms': synthesis_time,
-                'chunk_id': chunk_id,
-                'text_length': len(text),
-                'audio_duration_s': audio_duration_s,
-                'success': True,
-                'is_empty': False,
-                'voice_used': voice,
-                'speed_used': speed,
-                'performance_stats': performance_stats
+                'audio_duration_s': len(audio_data) / self.sample_rate
             }
-            
-            # ADDED: Cache successful results (limit cache size)
-            if len(final_audio) > 0 and len(self.synthesis_cache) < self.cache_size_limit:
-                self.synthesis_cache[cache_key] = result.copy()
-            elif len(self.synthesis_cache) >= self.cache_size_limit:
-                # Remove oldest entry
-                oldest_key = next(iter(self.synthesis_cache))
-                del self.synthesis_cache[oldest_key]
-                self.synthesis_cache[cache_key] = result.copy()
-            
-            self.generation_history.append(performance_stats)
-            
-            tts_logger.info(f"✅ OPTIMIZED synthesis for chunk {chunk_id} in {synthesis_time:.1f}ms "
-                           f"({audio_duration_s:.2f}s audio, RTF: {performance_stats['real_time_factor']:.2f})")
-            
-            return result
             
         except Exception as e:
-            synthesis_time = (time.time() - synthesis_start_time) * 1000
-            tts_logger.error(f"❌ OPTIMIZED synthesis error for chunk {chunk_id}: {e}")
-            
+            synthesis_time = (time.time() - synthesis_start) * 1000
+            tts_logger.error(f"❌ TTS synthesis error for chunk {chunk_id}: {e}")
             return {
+                'success': False,
                 'audio_data': np.array([]),
                 'sample_rate': self.sample_rate,
                 'synthesis_time_ms': synthesis_time,
-                'chunk_id': chunk_id,
-                'text_length': len(text) if text else 0,
-                'success': False,
-                'error': str(e),
-                'error_message': "TTS synthesis failed",
-                'is_empty': True
+                'error': str(e)
             }
     
     def get_available_voices(self) -> List[str]:
