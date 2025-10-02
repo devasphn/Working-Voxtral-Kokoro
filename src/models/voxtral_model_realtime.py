@@ -371,20 +371,19 @@ class VoxtralModel:
             with torch.no_grad():
                 outputs = self.model.generate(
                     **inputs,
-                    max_new_tokens=15,         # REDUCED from 50 to 15 for speed
+                    max_new_tokens=10,         # ULTRA-SHORT for maximum speed
                     min_new_tokens=1,
-                    do_sample=False,           # Deterministic for maximum speed
-                    num_beams=1,              # Single beam
+                    do_sample=False,           # Deterministic
+                    num_beams=1,               # Single beam
                     use_cache=True,
                     pad_token_id=self.processor.tokenizer.eos_token_id,
-                    # ADDED: Ultra-speed optimizations
-                    temperature=None,          # Disable sampling
-                    top_p=None,               # Disable sampling
-                    top_k=None,               # Disable sampling
+                    # ULTRA-SPEED optimizations
+                    temperature=1.0,           # Fast sampling
+                    top_p=0.9,                # Limited sampling
+                    top_k=10,                 # Very limited
                     repetition_penalty=1.0,    # No penalty
-                    length_penalty=1.0,        # No penalty
-                    no_repeat_ngram_size=0,    # Disable for speed
-                    # REMOVED: early_stopping - causes warning
+                    length_penalty=0.8,        # Prefer shorter responses
+                    no_repeat_ngram_size=2     # Minimal repeat prevention
                 )
             
             inference_time = (time.time() - inference_start) * 1000

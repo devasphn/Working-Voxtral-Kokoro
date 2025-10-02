@@ -169,30 +169,30 @@ class KokoroTTSModel:
         return text
     
     async def synthesize_speech(self, text: str, chunk_id: str = None) -> Dict[str, Any]:
-        """ULTRA-FAST TTS synthesis"""
+        """ULTRA-FAST TTS synthesis with CORRECT parameters"""
         if not self.is_initialized:
             raise RuntimeError("KokoroTTSModel not initialized")
         
         synthesis_start = time.time()
         try:
-            # Truncate text for speed (WORKING approach from logs)
+            # Truncate text for speed
             max_chars = 200  # Limit text length for speed
             if len(text) > max_chars:
                 text = text[:max_chars].rsplit(' ', 1)[0] + "..."
             
             tts_logger.debug(f"🎵 Starting ULTRA-FAST TTS for chunk {chunk_id}")
             
-            # WORKING: Call pipeline without unsupported parameters
+            # FIXED: Correct KPipeline parameters (removed 'lang' - not supported)
             result = self.pipeline(
                 text,
                 voice=self.voice,
-                lang=self.lang_code,
-                speed=1.2  # Slightly faster speed for reduced latency
+                # REMOVED: lang=self.lang_code - causes error
+                speed=self.speed
             )
             
             synthesis_time = (time.time() - synthesis_start) * 1000
             
-            # Extract audio data (WORKING approach from logs)
+            # Extract audio data
             if hasattr(result, 'audio') and result.audio is not None:
                 audio_data = result.audio
             elif isinstance(result, torch.Tensor):
