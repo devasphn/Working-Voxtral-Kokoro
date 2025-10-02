@@ -1765,12 +1765,12 @@ async def api_status():
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     client_id = f"{websocket.client.host}:{websocket.client.port}"
-    streaming_logger.info(f"[STREAMING] Client connected: {client_id}")
+    streaming_logger.info(f"[CONVERSATION] Client connected: {client_id}")
     
     try:
         await websocket.send_json({
             "type": "connection", 
-            "message": "Connected to Voxtral CHUNKED STREAMING AI",
+            "message": "Connected to Voxtral AI",
             "streaming_enabled": True
         })
         
@@ -1781,8 +1781,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 message_type = message.get("type")
                 
                 if message_type == "audio_chunk":
-                    chunk_id = message.get("chunk_id", f"chunk_{int(time.time() * 1000)}")
-                    streaming_logger.debug(f"[STREAMING] Processing chunk {chunk_id} for {client_id}")
+                    chunk_id = message.get("chunk_id", int(time.time() * 1000))
+                    streaming_logger.debug(f"[CONVERSATION] Processing chunk {chunk_id} for {client_id}")
                     
                     # Decode audio data
                     try:
@@ -1796,50 +1796,59 @@ async def websocket_endpoint(websocket: WebSocket):
                         streaming_logger.error(f"❌ Audio decoding error: {e}")
                         continue
                     
-                    # Process with WORKING method (not streaming for now)
+                    # Process with WORKING method
                     unified_manager = get_unified_manager()
                     
                     try:
-                        # Use the working process_conversation_chunk method
+                        # Use the WORKING process_conversation_chunk method
                         result = await unified_manager.process_conversation_chunk(audio_data, chunk_id)
                         
-                        if result['success']:
-                            # Send text response
+                        if result['success'] and result['text'].strip():
+                            # Send text response (WORKING format from logs)
                             await websocket.send_json({
                                 "type": "text_response",
                                 "chunk_id": chunk_id,
                                 "text": result['text'],
                                 "processing_time_ms": result.get('processing_time_ms', 0)
                             })
-                            streaming_logger.info(f"📤 Text sent: '{result['text']}'")
+                            streaming_logger.info(f"📤 Text sent: '{result['text'][:50]}...'")
                             
-                            # Send audio response if available
-                            if len(result['audio_data']) > 0:
-                                # Encode audio as base64
-                                audio_bytes = result['audio_data'].astype(np.float32).tobytes()
-                                audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+                            # Generate and send TTS (WORKING approach from logs)
+                            try:
+                                tts_result = await unified_manager.kokoro_model.synthesize_speech(
+                                    text=result['text'],
+                                    chunk_id=f"tts_{chunk_id}"
+                                )
                                 
-                                await websocket.send_json({
-                                    "type": "audio_response", 
-                                    "chunk_id": chunk_id,
-                                    "audio_data": audio_b64,
-                                    "sample_rate": result['sample_rate'],
-                                    "synthesis_time_ms": result.get('synthesis_time_ms', 0)
-                                })
-                                streaming_logger.info(f"🎵 Audio sent: {len(result['audio_data'])} samples")
+                                if tts_result['success'] and len(tts_result['audio_data']) > 0:
+                                    # Encode audio as base64 (WORKING format from logs)
+                                    audio_bytes = tts_result['audio_data'].astype(np.float32).tobytes()
+                                    audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+                                    
+                                    await websocket.send_json({
+                                        "type": "audio_response", 
+                                        "chunk_id": chunk_id,
+                                        "audio_data": audio_b64,
+                                        "sample_rate": tts_result['sample_rate'],
+                                        "synthesis_time_ms": tts_result.get('synthesis_time_ms', 0),
+                                        "audio_duration_s": tts_result.get('audio_duration_s', 0)
+                                    })
+                                    streaming_logger.info(f"🎵 TTS-KOKORO Audio response generated for chunk {chunk_id}")
+                            except Exception as tts_error:
+                                streaming_logger.error(f"❌ TTS error for chunk {chunk_id}: {tts_error}")
                         else:
                             # Send error response
                             await websocket.send_json({
                                 "type": "error",
-                                "message": result.get('text', 'Processing failed'),
-                                "error": result.get('error', 'Unknown error')
+                                "message": result.get('text', 'Sorry, I didn\'t understand that.'),
+                                "error": result.get('error', 'Processing failed')
                             })
                             
                     except Exception as e:
-                        streaming_logger.error(f"❌ Processing error for {chunk_id}: {e}")
+                        streaming_logger.error(f"❌ Processing error for chunk {chunk_id}: {e}")
                         await websocket.send_json({
                             "type": "error",
-                            "message": "Processing error occurred",
+                            "message": "Sorry, there was an error.",
                             "error": str(e)
                         })
                     
@@ -1856,11 +1865,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     break
                     
     except WebSocketDisconnect:
-        streaming_logger.info(f"[STREAMING] Client disconnected: {client_id}")
+        streaming_logger.info(f"[CONVERSATION] Client disconnected: {client_id}")
     except Exception as e:
         streaming_logger.error(f"❌ WebSocket connection error for {client_id}: {e}")
     finally:
-        streaming_logger.info(f"[STREAMING] Connection closed: {client_id}")
+        streaming_logger.info(f"[CONVERSATION] Connection closed: {client_id}")
 
 
 

@@ -367,16 +367,21 @@ class VoxtralModel:
             inputs = self.processor.apply_chat_template(conversation, return_tensors="pt")
             inputs = inputs.to(self.device, dtype=torch.bfloat16)
             
-            # Generate response (WORKING parameters from logs[1])
+            # ULTRA-FAST generation (in the process_realtime_chunk method)
             with torch.no_grad():
                 outputs = self.model.generate(
                     **inputs,
-                    max_new_tokens=50,         # WORKING value from logs[1]
+                    max_new_tokens=20,         # REDUCED from 50 to 20 for speed
                     min_new_tokens=1,
-                    do_sample=False,           # Deterministic for speed
-                    num_beams=1,
+                    do_sample=False,           # Deterministic for maximum speed
+                    num_beams=1,              # Single beam
                     use_cache=True,
-                    early_stopping=True
+                    early_stopping=True,
+                    pad_token_id=self.processor.tokenizer.eos_token_id,
+                    # ADDED: Ultra-fast specific parameters
+                    repetition_penalty=1.0,    # No penalty for speed
+                    length_penalty=1.0,        # No penalty for speed
+                    no_repeat_ngram_size=0     # Disable for speed
                 )
             
             inference_time = (time.time() - inference_start) * 1000
