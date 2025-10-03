@@ -95,17 +95,35 @@ class KokoroTTSModel:
             from kokoro import KPipeline
             self.pipeline = KPipeline(
                 repo_id="hexgrad/Kokoro-82M",
-                lang_code="h",  # CRITICAL: Required parameter from working logs
                 device=self.device
             )
             
-            # WORKING: Set voice parameters from successful logs
-            self.voice = "hf_alpha"  # Female voice as requested
-            self.lang_code = "h"     # Working language code
-            self.speed = 1.0         # Working speed
-            
-            self.is_initialized = True
-            tts_logger.info("✅ Kokoro TTS model fully initialized and ready for synthesis!")
+            try:
+                tts_logger.info("🎵 Testing Kokoro pipeline with sample text...")
+                # WORKING: Test call that succeeded in logs
+                test_result = self.pipeline(
+                    "Hello, this is a test.",
+                    voice="hf_alpha",  # Female voice from working logs
+                    lang="h",         # Language from working logs  
+                    speed=1.0
+                )
+                
+                if hasattr(test_result, 'audio'):
+                    test_samples = len(test_result.audio)
+                    tts_logger.info(f"🎵 Kokoro pipeline test successful - generated {test_samples} samples")
+                
+                # WORKING: Set parameters from successful logs
+                self.voice = "hf_alpha"
+                self.lang_code = "h" 
+                self.speed = 1.0
+                
+                tts_logger.info(f"Voice: {self.voice}, Speed: {self.speed}, Lang: {self.lang_code}")
+                tts_logger.info("✅ Kokoro TTS model fully initialized and ready for synthesis!")
+                self.is_initialized = True
+                
+            except Exception as e:
+                tts_logger.error(f"❌ Kokoro TTS initialization failed: {e}")
+                raise RuntimeError(f"Kokoro TTS initialization failed: {e}")
             
         except Exception as e:
             tts_logger.error(f"❌ Kokoro TTS initialization failed: {e}")
@@ -225,9 +243,9 @@ class KokoroTTSModel:
             # WORKING: Call pipeline with CORRECT parameters from logs
             result = self.pipeline(
                 text.strip(),
-                voice=self.voice,     # hf_alpha
-                lang=self.lang_code,  # h
-                speed=self.speed      # 1.0
+                voice="hf_alpha",  # WORKING: Female voice from logs
+                lang="h",         # WORKING: Language from logs
+                speed=1.0         # WORKING: Speed from logs
             )
             
             synthesis_time = (time.time() - synthesis_start) * 1000
