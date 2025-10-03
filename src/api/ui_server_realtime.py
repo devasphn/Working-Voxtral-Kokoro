@@ -634,12 +634,11 @@ async def home(request: Request):
         }
 
         // ULTRA-LOW LATENCY frontend settings
-        const CHUNK_SIZE = 2048;           // REDUCED: 2x smaller (was 4096)
-        const CHUNK_INTERVAL = 50;         // REDUCED: 2x faster (was 100ms)
         const SAMPLE_RATE = 16000;
-        const MIN_SPEECH_DURATION = 200;   // REDUCED: 2.5x faster (was 500ms)
-        const END_OF_SPEECH_SILENCE = 600; // REDUCED: 2.5x faster (was 1500ms)
-        const SILENCE_THRESHOLD = 0.005;   // REDUCED: 2x more sensitive (was 0.01)
+        const CHUNK_SIZE = 4096;
+        const MIN_SPEECH_DURATION = 800;     // INCREASED: Minimum speech duration (was 500)
+        const END_OF_SPEECH_SILENCE = 1200;   // INCREASED: End of speech silence (was 800)
+        const SPEECH_THRESHOLD = 0.025;     // INCREASED: Speech threshold (was 0.01)
         const LATENCY_WARNING_THRESHOLD = 1000;
         
         function log(message, type = 'info') {
@@ -647,23 +646,17 @@ async def home(request: Request):
         }
 
         // Enhanced VAD function for continuous speech detection
-        function detectSpeechInBuffer(audioData) {
-            if (!audioData || audioData.length === 0) return false;
-
+        function detectSpeechInBuffer(inputData) {
             // Calculate RMS energy
             let sum = 0;
-            for (let i = 0; i < audioData.length; i++) {
-                sum += audioData[i] * audioData[i];
+            for (let i = 0; i < inputData.length; i++) {
+                sum += inputData[i] * inputData[i];
             }
-            const rms = Math.sqrt(sum / audioData.length);
-
-            // Calculate max amplitude
-            const maxAmplitude = Math.max(...audioData.map(Math.abs));
-
-            // Speech detected if both RMS and amplitude exceed thresholds
-            const hasSpeech = rms > SILENCE_THRESHOLD && maxAmplitude > 0.002;
-
-            return hasSpeech;
+            const rms = Math.sqrt(sum / inputData.length);
+            
+            // FIXED: Higher threshold to avoid false positives
+            const speechThreshold = 0.02;  // INCREASED from 0.01 to 0.02
+            return rms > speechThreshold;
         }
         
         // Detect environment and construct WebSocket URL
@@ -1005,44 +998,116 @@ async def home(request: Request):
         }
         
         function handleWebSocketMessage(data) {
-            log(`Received message type: ${data.type}`);
+            log('Received message type: ' + data.type);
             
-            switch (data.type) {
-                case 'connection':
-                    updateStatus(data.message, 'success');
-                    break;
-                    
-                case 'response':
-                    // Check for response deduplication
-                    if (data.text && data.text.trim() !== '' && data.text !== lastResponseText) {
-                        displayConversationMessage(data);
-                        lastResponseText = data.text;
-                        log(`Received unique response: "${data.text.substring(0, 50)}..."`);
-                    } else if (data.text === lastResponseText) {
-                        log('Duplicate response detected - skipping display');
-                    }
+            if (data.type === 'connection') {
+                log('Connected to Voxtral AI');
+                updateConnectionStatus(true);
+            }
+            else if (data.type === 'text_chunk') {
+                // ADDED: Handle chunked text responses
+                log('📝 Text Chunk: "' + data.text + '"');
+                displayPartialResponse(data.text, data.is_final || false);
+            }
+            else if (data.type === 'text_response') {
+                log('📝 Response: "' + data.text + '"');
+                displayResponse(data.text);
+                resetForNextInput(); // ADDED: Reset for next input
+            }
+            else if (data.type === 'audio_chunk_stream') {
+                // ADDED: Handle chunked audio responses
+                log('🎵 Playing audio chunk');
+                playAudioChunk(data);
+            }
+            else if (data.type === 'audio_response') {
+                log('🎵 Playing audio response');
+                playAudioChunk(data);
+            }
+            else if (data.type === 'error') {
+                log('❌ Server error: ' + (data.message || data.error));
+                resetForNextInput(); // ADDED: Reset on error
+            }
+            else {
+                log('Unknown message type: ' + data.type);
+            }
+        }
 
-                    // Reset pending response flag to allow new speech processing
-                    pendingResponse = false;
-                    break;
-                    
-                case 'error':
-                    updateStatus('Error: ' + data.message, 'error');
-                    break;
-                    
-                case 'info':
-                    updateStatus(data.message, 'loading');
-                    break;
+        // ADDED: Display partial responses for chunked streaming
+        function displayPartialResponse(text, isFinal) {
+            const responseDiv = document.getElementById('response') || createResponseDiv();
+            if (isFinal) {
+                responseDiv.innerHTML = '<strong>Complete:</strong> ' + text;
+            } else {
+                responseDiv.innerHTML += text + ' ';
+            }
+            responseDiv.scrollTop = responseDiv.scrollHeight;
+        }
 
-                case 'audio_response':
-                    // Handle TTS audio response
-                    handleAudioResponse(data);
-                // Speech-to-Speech message types
-                case 'processing':
-                    if (speechToSpeechActive) {
-                        showProcessingStatus(data.stage, data.message);
-                    }
-                    break;
+        // ADDED: Display complete response
+        function displayResponse(text) {
+            const responseDiv = document.getElementById('response') || createResponseDiv();
+            responseDiv.innerHTML = '<strong>Response:</strong> ' + text;
+        }
+
+        // ADDED: Create response div if missing
+        function createResponseDiv() {
+            let responseDiv = document.getElementById('response');
+            if (!responseDiv) {
+                responseDiv = document.createElement('div');
+                responseDiv.id = 'response';
+                responseDiv.style.cssText = 'margin: 10px 0; padding: 10px; border: 1px solid #ccc; background: #f9f9f9;';
+                document.body.appendChild(responseDiv);
+            }
+            return responseDiv;
+        }
+
+        // ADDED: Play audio chunks with proper error handling
+        async function playAudioChunk(data) {
+            try {
+                if (!audioContext) {
+                    audioContext = initializeAudioContext();
+                }
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+
+                // Decode audio data
+                const audioBytes = Uint8Array.from(atob(data.audio_data), c => c.charCodeAt(0));
+                const audioFloat32 = new Float32Array(audioBytes.buffer);
+
+                // Create and play audio buffer
+                const audioBuffer = audioContext.createBuffer(1, audioFloat32.length, data.sample_rate);
+                audioBuffer.copyToChannel(audioFloat32, 0);
+
+                const source = audioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(audioContext.destination);
+                
+                source.onended = () => {
+                    log('✅ Audio played successfully');
+                    // Don't reset here - let the text response handle it
+                };
+                
+                source.start();
+            } catch (error) {
+                console.error('Audio playback error:', error);
+                log('❌ Audio playback failed: ' + error.message);
+            }
+        }
+
+        // ADDED: Reset system for next input
+        function resetForNextInput() {
+            pendingResponse = false;
+            updateVadStatus('silence');
+            
+            // Reset speech detection state
+            isSpeechActive = false;
+            speechStartTime = null;
+            lastSpeechTime = null;
+            silenceStartTime = null;
+            
+            log('🔄 Ready for next input');
+        }
 
                 case 'transcription':
                     if (speechToSpeechActive) {
@@ -1503,13 +1568,14 @@ async def home(request: Request):
                         log(`Processing ULTRA-FAST utterance: ${continuousAudioBuffer.length} samples, ${lastSpeechTime - speechStartTime}ms duration`);
                         sendCompleteUtterance(new Float32Array(continuousAudioBuffer));
 
-                        // Reset for next utterance
+                        // FIXED: Reset for next utterance
                         continuousAudioBuffer = [];
                         isSpeechActive = false;
                         speechStartTime = null;
                         lastSpeechTime = null;
                         silenceStartTime = null;
                         pendingResponse = true; // Prevent processing until response received
+                        updateVadStatus('processing'); // ADDED: Show processing state
                     }
 
                     // Prevent buffer from growing too large (max 5 seconds)
