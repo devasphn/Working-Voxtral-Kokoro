@@ -911,39 +911,49 @@ async def home(request: Request):
                     log('WebSocket connection established');
                 };
                 
-                // WORKING audio handling
+                // CHUNKED STREAMING message handler
                 ws.onmessage = async (event) => {
                     try {
                         const data = JSON.parse(event.data);
                         
                         if (data.type === 'connection') {
-                            log('Connected to Voxtral AI');
+                            log('Connected to Voxtral CHUNKED STREAMING AI');
                             updateConnectionStatus(true);
                         }
-                        else if (data.type === 'text_response') {
-                            log(`📝 Response: "${data.text}"`);
-                            
-                            // Update UI with response text
-                            updateResponseDisplay(data.text);
+                        else if (data.type === 'text_chunk') {
+                            // Display text chunk immediately
+                            log(`📝 Text Chunk ${data.chunk_id}: "${data.text}"`);
+                            updateResponseDisplay(data.text, data.is_final);
                         }
-                        else if (data.type === 'audio_response') {
-                            log(`🎵 Playing audio response`);
+                        else if (data.type === 'audio_chunk_stream') {
+                            log(`🎵 Playing audio chunk ${data.chunk_id}`);
                             
                             try {
-                                // Decode and play audio
+                                // Ensure audio context is initialized
+                                const ctx = initializeAudioContext();
+                                if (ctx.state === 'suspended') {
+                                    await ctx.resume();
+                                }
+                                
+                                // Decode and play audio chunk immediately
                                 const audioBytes = Uint8Array.from(atob(data.audio_data), c => c.charCodeAt(0));
                                 const audioFloat32 = new Float32Array(audioBytes.buffer);
                                 
                                 // Create and play audio buffer
-                                const audioBuffer = audioContext.createBuffer(1, audioFloat32.length, data.sample_rate);
+                                const audioBuffer = ctx.createBuffer(1, audioFloat32.length, data.sample_rate);
                                 audioBuffer.copyToChannel(audioFloat32, 0);
                                 
-                                const source = audioContext.createBufferSource();
-                                source.buffer = audioBuffer;
-                                source.connect(audioContext.destination);
-                                source.start();
+                                // Add to queue for sequential playback
+                                audioQueue.push({
+                                    buffer: audioBuffer,
+                                    chunk_id: data.chunk_id,
+                                    is_final: data.is_final
+                                });
                                 
-                                log(`✅ Audio played successfully`);
+                                // Start playback if not already playing
+                                if (!isPlayingAudio) {
+                                    playNextAudioChunk();
+                                }
                                 
                             } catch (audioError) {
                                 console.error('Audio playback error:', audioError);
@@ -954,10 +964,6 @@ async def home(request: Request):
                             console.error('Server error:', data.error);
                             log(`❌ Error: ${data.message}`);
                         }
-                        
-                        // Reset for next request
-                        pendingResponse = false;
-                        updateVadStatus('ready');
                         
                     } catch (error) {
                         console.error('Message parsing error:', error);
@@ -1396,18 +1402,60 @@ async def home(request: Request):
             log('🎵 All audio chunks played');
         }
         
-        // SIMPLE response display function
-        function updateResponseDisplay(text) {
+        // FIXED: Audio context handling
+        let audioContext = null;
+        let audioQueue = [];
+        let isPlayingAudio = false;
+        
+        // Initialize audio context properly
+        function initializeAudioContext() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                    sampleRate: 16000,
+                    latencyHint: 'interactive'
+                });
+            }
+            return audioContext;
+        }
+        
+        // Sequential audio playback
+        function playNextAudioChunk() {
+            if (audioQueue.length === 0) {
+                isPlayingAudio = false;
+                return;
+            }
+            
+            isPlayingAudio = true;
+            const audioItem = audioQueue.shift();
+            const source = audioContext.createBufferSource();
+            source.buffer = audioItem.buffer;
+            source.connect(audioContext.destination);
+            
+            source.onended = () => {
+                log(`✅ Audio chunk ${audioItem.chunk_id} played`);
+                
+                // Play next chunk immediately
+                if (audioQueue.length > 0) {
+                    setTimeout(playNextAudioChunk, 50); // Small gap between chunks
+                } else {
+                    isPlayingAudio = false;
+                    log('🎉 All audio chunks played');
+                }
+            };
+            
+            source.start();
+        }
+        
+        // Update response display for chunked text
+        function updateResponseDisplay(text, isFinal) {
             const responseElement = document.getElementById('response-display');
             if (responseElement) {
-                responseElement.textContent = text;
-                responseElement.style.backgroundColor = '#e8f5e8';
-                
-                // Clear after 5 seconds
-                setTimeout(() => {
-                    responseElement.textContent = '';
-                    responseElement.style.backgroundColor = 'white';
-                }, 5000);
+                if (isFinal) {
+                    responseElement.innerHTML += '<br><strong>Complete:</strong> ' + text;
+                } else {
+                    responseElement.innerHTML += text + ' ';
+                }
+                responseElement.scrollTop = responseElement.scrollHeight;
             }
         }
         
@@ -1428,10 +1476,7 @@ async def home(request: Request):
                 
                 log('Microphone access granted');
                 
-                audioContext = new (window.AudioContext || window.webkitAudioContext)({
-                    sampleRate: SAMPLE_RATE
-                });
-                
+                audioContext = initializeAudioContext();
                 await audioContext.resume();
                 log(`Audio context created with sample rate: ${audioContext.sampleRate}`);
                 
@@ -1782,7 +1827,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 
                 if message_type == "audio_chunk":
                     chunk_id = message.get("chunk_id", int(time.time() * 1000))
-                    streaming_logger.debug(f"[CONVERSATION] Processing chunk {chunk_id} for {client_id}")
+                    streaming_logger.debug(f"[CHUNKED] Processing chunk {chunk_id} for {client_id}")
                     
                     # Decode audio data
                     try:
@@ -1796,50 +1841,57 @@ async def websocket_endpoint(websocket: WebSocket):
                         streaming_logger.error(f"❌ Audio decoding error: {e}")
                         continue
                     
-                    # Process with WORKING method
+                    # Process with CHUNKED STREAMING
                     unified_manager = get_unified_manager()
                     
                     try:
-                        # Use the WORKING process_conversation_chunk method
-                        result = await unified_manager.process_conversation_chunk(audio_data, chunk_id)
-                        
-                        if result['success'] and result['text'].strip():
-                            # Send text response (WORKING format from logs[1])
-                            await websocket.send_json({
-                                "type": "text_response",
-                                "chunk_id": chunk_id,
-                                "text": result['text'],
-                                "processing_time_ms": result.get('processing_time_ms', 0)
-                            })
-                            streaming_logger.info(f"📤 CONVERSATION Text sent for chunk {chunk_id}: '{result['text'][:50]}...'")
-                            
-                            # Send audio response if TTS succeeded (WORKING approach from logs[1])
-                            if result.get('tts_success', False) and len(result.get('audio_data', [])) > 0:
-                                # Encode audio as base64 (WORKING format from logs[1])
-                                audio_bytes = result['audio_data'].astype(np.float32).tobytes()
-                                audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
-                                
+                        # Use CHUNKED STREAMING method
+                        chunk_counter = 0
+                        async for text_chunk in unified_manager.voxtral_model.process_realtime_chunk_streaming(
+                            audio_data, chunk_id, mode="conversation"
+                        ):
+                            if text_chunk['success'] and text_chunk['text'].strip():
+                                # Send text chunk immediately
                                 await websocket.send_json({
-                                    "type": "audio_response", 
-                                    "chunk_id": chunk_id,
-                                    "audio_data": audio_b64,
-                                    "sample_rate": result['sample_rate'],
-                                    "synthesis_time_ms": result.get('tts_time_ms', 0),
-                                    "audio_duration_s": result.get('audio_duration_s', 0)
+                                    "type": "text_chunk",
+                                    "chunk_id": f"{chunk_id}_{chunk_counter}",
+                                    "text": text_chunk['text'],
+                                    "is_final": text_chunk.get('is_final', False),
+                                    "processing_time_ms": text_chunk.get('processing_time_ms', 0)
                                 })
-                                streaming_logger.info(f"🎵 TTS-KOKORO Audio response generated for chunk {chunk_id}")
-                            
-                            streaming_logger.info(f"✅ CONVERSATION Unique response sent for chunk {chunk_id}")
-                        else:
-                            # Send error response
-                            await websocket.send_json({
-                                "type": "error",
-                                "message": result.get('text', 'Sorry, I didn\'t understand that.'),
-                                "error": result.get('error', 'Processing failed')
-                            })
-                            
+                                streaming_logger.debug(f"📤 Text chunk {chunk_counter}: '{text_chunk['text']}'")
+                                
+                                # Generate TTS for this chunk immediately
+                                try:
+                                    tts_result = await unified_manager.kokoro_model.synthesize_speech_chunk(
+                                        text=text_chunk['text'],
+                                        chunk_id=f"tts_{chunk_id}_{chunk_counter}"
+                                    )
+                                    
+                                    if tts_result['success'] and len(tts_result['audio_data']) > 0:
+                                        # Send audio chunk immediately
+                                        audio_bytes = tts_result['audio_data'].astype(np.float32).tobytes()
+                                        audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+                                        
+                                        await websocket.send_json({
+                                            "type": "audio_chunk_stream",
+                                            "chunk_id": f"{chunk_id}_{chunk_counter}",
+                                            "audio_data": audio_b64,
+                                            "sample_rate": tts_result['sample_rate'],
+                                            "synthesis_time_ms": tts_result.get('synthesis_time_ms', 0),
+                                            "is_final": text_chunk.get('is_final', False)
+                                        })
+                                        streaming_logger.debug(f"🎵 Audio chunk {chunk_counter} sent instantly")
+                                        
+                                except Exception as tts_error:
+                                    streaming_logger.error(f"❌ TTS error for chunk {chunk_counter}: {tts_error}")
+                                
+                                chunk_counter += 1
+                        
+                        streaming_logger.info(f"✅ CHUNKED STREAMING complete for {chunk_id}: {chunk_counter} chunks")
+                        
                     except Exception as e:
-                        streaming_logger.error(f"❌ Processing error for chunk {chunk_id}: {e}")
+                        streaming_logger.error(f"❌ CHUNKED STREAMING error for {chunk_id}: {e}")
                         await websocket.send_json({
                             "type": "error",
                             "message": "Sorry, there was an error.",
