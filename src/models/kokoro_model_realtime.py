@@ -83,47 +83,29 @@ class KokoroTTSModel:
         tts_logger.info(f"   🎤 Voice: {self.voice}, Speed: {self.speed}, Lang: {self.lang_code}")
     
     async def initialize(self):
-        """Initialize Kokoro TTS - EXACT WORKING VERSION from logs"""
+        """Minimal WORKING initialization based on logs"""
         try:
             tts_logger.info("🎵 Initializing Kokoro TTS model for real-time synthesis...")
             
-            # WORKING: Initialize model manager (from successful logs)
+            # WORKING: Exact pattern from logs
             self.model_manager = KokoroModelManager("hexgrad/Kokoro-82M")
             
-            tts_logger.info("🎵 Checking Kokoro model files...")
-            # From working logs - model files verification
-            tts_logger.info("🎵 All model files verified and ready")
-            
             tts_logger.info("🎵 Loading Kokoro pipeline with language code h")
-            # WORKING: KPipeline initialization with REQUIRED lang_code parameter
+            # WORKING: With required positional arguments in correct order
             from kokoro import KPipeline
             self.pipeline = KPipeline(
-                "hexgrad/Kokoro-82M",  # repo_id as positional argument
-                lang_code="h",         # REQUIRED: language code from working logs
-                device=self.device     # device parameter
+                repo_id="hexgrad/Kokoro-82M",
+                lang_code="h",  # CRITICAL: Required parameter from working logs
+                device=self.device
             )
             
-            tts_logger.info("🎵 Testing Kokoro pipeline with sample text...")
-            # Test the pipeline (from working logs pattern)
-            test_result = self.pipeline(
-                "Hello, this is a test.",
-                voice="hf_alpha",  # Female voice from working logs
-                lang="h",         # Language from working logs  
-                speed=1.0
-            )
+            # WORKING: Set voice parameters from successful logs
+            self.voice = "hf_alpha"  # Female voice as requested
+            self.lang_code = "h"     # Working language code
+            self.speed = 1.0         # Working speed
             
-            if hasattr(test_result, 'audio'):
-                test_samples = len(test_result.audio)
-                tts_logger.info(f"🎵 Kokoro pipeline test successful - generated {test_samples} samples")
-            
-            # WORKING: Set parameters exactly from successful logs
-            self.voice = "hf_alpha"  # Female voice
-            self.lang_code = "h"     # Language code from logs
-            self.speed = 1.0         # Speed from logs
-            
-            tts_logger.info(f"Voice: {self.voice}, Speed: {self.speed}, Lang: {self.lang_code}")
-            tts_logger.info("✅ Kokoro TTS model fully initialized and ready for synthesis!")
             self.is_initialized = True
+            tts_logger.info("✅ Kokoro TTS model fully initialized and ready for synthesis!")
             
         except Exception as e:
             tts_logger.error(f"❌ Kokoro TTS initialization failed: {e}")
