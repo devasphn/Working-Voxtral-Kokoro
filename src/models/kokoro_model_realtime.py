@@ -59,7 +59,7 @@ class KokoroTTSModel:
         self.lang_code = config.tts.lang_code
         
         # ADDED: Performance optimization settings
-        self.max_text_length = 500  # OPTIMIZED: Smaller chunks (was 1000)
+        self.max_text_length = 1000  # Maximum text length per generation
         self.chunk_size = 512      # OPTIMIZED: Smaller processing chunks
         
         # ADDED: Threading for async processing
@@ -82,47 +82,70 @@ class KokoroTTSModel:
         tts_logger.info(f"🎵 KokoroTTSModel initialized with device: {self.device}")
         tts_logger.info(f"   🎤 Voice: {self.voice}, Speed: {self.speed}, Lang: {self.lang_code}")
     
-    async def initialize(self):
-        """Initialize Kokoro TTS - OFFICIAL working pattern"""
+    async def initialize(self) -> bool:
+        """Initialize the Kokoro TTS model with production-ready settings"""
+        if self.is_initialized:
+            tts_logger.info("🎵 Kokoro TTS model already initialized")
+            return True
+
+        start_time = time.time()
+        tts_logger.info("🚀 Initializing Kokoro TTS model for real-time synthesis...")
+
         try:
-            tts_logger.info("🎵 Initializing Kokoro TTS model for real-time synthesis...")
-            
-            # OFFICIAL: Initialize model manager
-            self.model_manager = KokoroModelManager("hexgrad/Kokoro-82M")
-            
-            tts_logger.info("🎵 Loading Kokoro pipeline with language code h")
-            # OFFICIAL: KPipeline with required lang_code parameter
+            # WORKING: Check and download model files if needed (from your working version)
+            from src.utils.kokoro_model_manager import kokoro_model_manager
+
+            tts_logger.info("🔍 Checking Kokoro model files...")
+            status = kokoro_model_manager.get_model_status()
+
+            if status['integrity_percentage'] < 100:
+                tts_logger.info(f"📥 Model files incomplete ({status['integrity_percentage']:.1f}%), downloading...")
+                download_success = kokoro_model_manager.download_model_files()
+                if not download_success:
+                    tts_logger.error("❌ Failed to download Kokoro model files")
+                    return False
+                tts_logger.info("✅ Model files downloaded successfully")
+            else:
+                tts_logger.info("✅ All model files verified and ready")
+
+            # WORKING: Import and initialize (from your working version)
             from kokoro import KPipeline
-            self.pipeline = KPipeline(lang_code='h')  # Hindi for hf_alpha voice
-            
-            tts_logger.info("🎵 Testing Kokoro pipeline with sample text...")
-            # OFFICIAL: Test with correct parameters
-            test_result = self.pipeline(
-                "Hello, this is a test.",
-                voice="hf_alpha"  # Female Hindi voice
-            )
-            
-            # Extract audio data
-            if hasattr(test_result, '__iter__'):
-                # Generator pattern from official docs
-                for i, (gs, ps, audio) in enumerate(test_result):
-                    if i == 0:  # Use first result for test
-                        test_samples = len(audio)
-                        tts_logger.info(f"🎵 Kokoro pipeline test successful - generated {test_samples} samples")
-                        break
-            
-            # Set voice parameters
-            self.voice = "hf_alpha"  # Female voice
-            self.lang_code = "h"     # Hindi
-            self.speed = 1.0         # Default speed
-            
-            tts_logger.info(f"Voice: {self.voice}, Speed: {self.speed}, Lang: {self.lang_code}")
-            tts_logger.info("✅ Kokoro TTS model fully initialized and ready for synthesis!")
+
+            tts_logger.info(f"📥 Loading Kokoro pipeline with language code: {self.lang_code}")
+
+            # WORKING: Initialize pipeline with language code from config
+            self.pipeline = KPipeline(lang_code=self.lang_code)
+
+            # WORKING: Test the pipeline (exact pattern from your working version)
+            test_text = "Kokoro TTS initialization test."
+            tts_logger.info("🧪 Testing Kokoro pipeline with sample text...")
+
+            test_generator = self.pipeline(test_text, voice=self.voice, speed=self.speed)
+            test_audio = None
+
+            for i, (gs, ps, audio) in enumerate(test_generator):
+                test_audio = audio
+                break  # Just test the first chunk
+
+            if test_audio is not None:
+                tts_logger.info(f"✅ Kokoro pipeline test successful - generated {len(test_audio)} samples")
+            else:
+                raise RuntimeError("Pipeline test failed - no audio generated")
+
             self.is_initialized = True
-            
+            init_time = time.time() - start_time
+            tts_logger.info(f"🎉 Kokoro TTS model fully initialized in {init_time:.2f}s and ready for synthesis!")
+            return True
+
+        except ImportError as e:
+            tts_logger.error(f"❌ Failed to import Kokoro: {e}")
+            tts_logger.error("💡 Please install Kokoro: pip install kokoro>=0.9.4")
+            return False
         except Exception as e:
-            tts_logger.error(f"❌ Kokoro TTS initialization failed: {e}")
-            raise RuntimeError(f"Kokoro TTS initialization failed: {e}")
+            tts_logger.error(f"❌ Failed to initialize Kokoro TTS model: {e}")
+            import traceback
+            tts_logger.error(f"❌ Full error traceback: {traceback.format_exc()}")
+            return False
     
     def _preprocess_text_for_tts(self, text: str) -> str:
         """OPTIMIZED: Preprocess text for faster TTS"""
@@ -155,75 +178,112 @@ class KokoroTTSModel:
         
         return text
     
-    async def synthesize_speech(self, text: str, chunk_id: str = None) -> Dict[str, Any]:
-        """ULTRA-FAST TTS synthesis - FINAL WORKING VERSION"""
+    async def synthesize_speech(self, text: str, voice: Optional[str] = None, speed: Optional[float] = None, chunk_id: Optional[str] = None) -> Dict[str, Any]:
+        """PRODUCTION-READY speech synthesis for real-time applications (WORKING VERSION)"""
         if not self.is_initialized:
-            raise RuntimeError("KokoroTTSModel not initialized")
-        
-        synthesis_start = time.time()
+            raise RuntimeError("Kokoro TTS model not initialized. Call initialize() first.")
+
+        synthesis_start_time = time.time()
+        chunk_id = chunk_id or f"tts_{int(time.time() * 1000)}"
+
+        # Use provided parameters or defaults
+        voice = voice or self.voice
+        speed = speed or self.speed
+
         try:
-            # Truncate text for speed
-            max_chars = 200
-            if len(text) > max_chars:
-                text = text[:max_chars].rsplit(' ', 1)[0] + "..."
-            
-            tts_logger.debug(f"🎵 Starting ULTRA-FAST TTS for chunk {chunk_id}")
-            
-            # WORKING: Call pipeline with minimal parameters
-            result = self.pipeline(
-                text,
-                voice=self.voice,
-                speed=self.speed
-            )
-            
-            synthesis_time = (time.time() - synthesis_start) * 1000
-            
-            # FIXED: Handle generator object properly
-            if hasattr(result, 'audio') and result.audio is not None:
-                audio_data = result.audio
-            elif isinstance(result, torch.Tensor):
-                audio_data = result
-            elif hasattr(result, '__iter__') and not isinstance(result, (str, bytes)):
-                # Handle generator - convert to list first
-                try:
-                    result_list = list(result)
-                    if result_list and hasattr(result_list[0], 'audio'):
-                        audio_data = result_list[0].audio
-                    else:
-                        audio_data = result_list[0] if result_list else torch.zeros(16000)
-                except:
-                    audio_data = torch.zeros(16000)  # Fallback silent audio
+            tts_logger.debug(f"🎵 Synthesizing speech for chunk {chunk_id}: '{text[:50]}...'")
+
+            # Validate and preprocess text
+            if not text or not text.strip():
+                tts_logger.warning(f"⚠️ Empty text provided for chunk {chunk_id}")
+                return {
+                    'audio_data': np.array([]),
+                    'sample_rate': self.sample_rate,
+                    'synthesis_time_ms': (time.time() - synthesis_start_time) * 1000,
+                    'chunk_id': chunk_id,
+                    'text_length': 0,
+                    'success': True,
+                    'is_empty': True
+                }
+
+            # Truncate text if too long (from working version)
+            if len(text) > self.max_text_length:
+                text = text[:self.max_text_length]
+                tts_logger.warning(f"⚠️ Text truncated to {self.max_text_length} characters for chunk {chunk_id}")
+
+            # WORKING: Generate speech using Kokoro pipeline (exact pattern)
+            generator = self.pipeline(text, voice=voice, speed=speed)
+
+            # WORKING: Collect all audio chunks (exact pattern from working version)
+            audio_chunks = []
+            total_samples = 0
+
+            for i, (gs, ps, audio) in enumerate(generator):
+                if audio is not None and len(audio) > 0:
+                    audio_chunks.append(audio)
+                    total_samples += len(audio)
+                    tts_logger.debug(f"   📦 Generated chunk {i}: {len(audio)} samples")
+
+            # WORKING: Concatenate all audio chunks (exact pattern)
+            if audio_chunks:
+                final_audio = np.concatenate(audio_chunks)
+                tts_logger.debug(f"   🔗 Concatenated {len(audio_chunks)} chunks into {len(final_audio)} samples")
             else:
-                audio_data = result
-            
-            # Convert to numpy safely
-            if isinstance(audio_data, torch.Tensor):
-                audio_data = audio_data.cpu().numpy()
-            elif not isinstance(audio_data, np.ndarray):
-                # Create silent audio as fallback
-                audio_data = np.zeros(int(self.sample_rate * 1.0))  # 1 second of silence
-            
-            tts_logger.info(f"✅ Synthesized speech for chunk {chunk_id} in {synthesis_time:.1f}ms: {len(audio_data)/self.sample_rate:.2f}s audio")
-            
-            return {
-                'success': True,
-                'audio_data': audio_data,
-                'sample_rate': self.sample_rate,
+                final_audio = np.array([])
+                tts_logger.warning(f"⚠️ No audio generated for chunk {chunk_id}")
+
+            synthesis_time = (time.time() - synthesis_start_time) * 1000
+            audio_duration_s = len(final_audio) / self.sample_rate if len(final_audio) > 0 else 0
+
+            # WORKING: Track performance metrics (from working version)
+            performance_stats = {
                 'synthesis_time_ms': synthesis_time,
-                'audio_duration_s': len(audio_data) / self.sample_rate
+                'audio_duration_s': audio_duration_s,
+                'text_length': len(text),
+                'audio_samples': len(final_audio),
+                'real_time_factor': audio_duration_s / (synthesis_time / 1000) if synthesis_time > 0 else 0
             }
-            
-        except Exception as e:
-            synthesis_time = (time.time() - synthesis_start) * 1000
-            tts_logger.error(f"❌ TTS synthesis error for chunk {chunk_id}: {e}")
-            # Return silent audio instead of empty array
-            silent_audio = np.zeros(int(self.sample_rate * 1.0))  # 1 second silence
+
+            self.generation_history.append(performance_stats)
+
+            tts_logger.info(f"✅ Synthesized speech for chunk {chunk_id} in {synthesis_time:.1f}ms "
+                          f"({audio_duration_s:.2f}s audio, RTF: {performance_stats['real_time_factor']:.2f})")
+
             return {
-                'success': False,
-                'audio_data': silent_audio,
+                'audio_data': final_audio,
                 'sample_rate': self.sample_rate,
                 'synthesis_time_ms': synthesis_time,
-                'error': str(e)
+                'chunk_id': chunk_id,
+                'text_length': len(text),
+                'audio_duration_s': audio_duration_s,
+                'success': True,
+                'is_empty': False,
+                'voice_used': voice,
+                'speed_used': speed,
+                'performance_stats': performance_stats
+            }
+
+        except Exception as e:
+            synthesis_time = (time.time() - synthesis_start_time) * 1000
+            tts_logger.error(f"❌ Error synthesizing speech for chunk {chunk_id}: {e}")
+
+            # WORKING: Return error response (exact pattern from working version)
+            error_msg = "Could not synthesize speech"
+            if "CUDA out of memory" in str(e):
+                error_msg = "GPU memory error during TTS"
+            elif "timeout" in str(e).lower():
+                error_msg = "TTS synthesis timeout"
+
+            return {
+                'audio_data': np.array([]),
+                'sample_rate': self.sample_rate,
+                'synthesis_time_ms': synthesis_time,
+                'chunk_id': chunk_id,
+                'text_length': len(text) if text else 0,
+                'success': False,
+                'error': str(e),
+                'error_message': error_msg,
+                'is_empty': True
             }
     
     async def synthesize_speech_chunk(self, text: str, chunk_id: str = None) -> Dict[str, Any]:
