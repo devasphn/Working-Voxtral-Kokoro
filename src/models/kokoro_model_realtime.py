@@ -83,29 +83,30 @@ class KokoroTTSModel:
         tts_logger.info(f"   🎤 Voice: {self.voice}, Speed: {self.speed}, Lang: {self.lang_code}")
     
     async def initialize(self):
-        """Initialize Kokoro TTS with CORRECT female voice"""
+        """Initialize Kokoro TTS with CORRECT parameters (from working logs)"""
         try:
             tts_logger.info("🎵 Initializing Kokoro TTS for CHUNKED STREAMING...")
             
-            # Load the model manager
+            # CORRECT: Initialize model manager WITHOUT device parameter (from working logs)
             self.model_manager = KokoroModelManager(
-                device=self.device,
-                repo_id="hexgrad/Kokoro-82M"
+                repo_id="hexgrad/Kokoro-82M"  # Only repo_id parameter
+                # REMOVED: device parameter - not supported
             )
             
-            # Load the TTS pipeline with CORRECT female voice
+            # CORRECT: Load the TTS pipeline with proper voice selection
             self.pipeline = KPipeline(
                 model_path=self.model_manager.model_files["model"],
                 voice_path=self.model_manager.model_files["voices"]["hf_alpha"],  # FEMALE VOICE
-                device=self.device
+                device=self.device  # Device is passed to KPipeline, not KokoroModelManager
             )
             
-            # Set correct voice parameters
+            # Set correct voice parameters (from working logs)
             self.voice = "hf_alpha"  # FEMALE VOICE
-            self.lang_code = "en"    # English
+            self.lang_code = "h"     # Language code from working logs
             self.speed = 1.0         # Normal speed
             
             tts_logger.info(f"✅ Kokoro TTS initialized with FEMALE voice: {self.voice}")
+            tts_logger.info(f"Voice: {self.voice}, Speed: {self.speed}, Lang: {self.lang_code}")
             self.is_initialized = True
             
         except Exception as e:
@@ -215,28 +216,27 @@ class KokoroTTSModel:
             }
     
     async def synthesize_speech_chunk(self, text: str, chunk_id: str = None) -> Dict[str, Any]:
-        """Synthesize speech chunk for streaming - OPTIMIZED"""
+        """Synthesize speech chunk - WORKING VERSION from logs"""
         if not self.is_initialized:
             raise RuntimeError("KokoroTTSModel not initialized")
         
         synthesis_start = time.time()
         try:
-            tts_logger.debug(f"🎵 Synthesizing CHUNK: '{text}' for {chunk_id}")
+            tts_logger.debug(f"🎵 Starting TTS synthesis for chunk {chunk_id}")
             
-            # OPTIMIZED: Direct pipeline call for chunks
+            # WORKING: Call pipeline with CORRECT parameters from logs
             result = self.pipeline(
                 text.strip(),
-                voice=self.voice,  # hf_alpha female voice
-                speed=1.2          # Slightly faster for real-time feel
+                voice=self.voice,     # hf_alpha
+                lang=self.lang_code,  # h
+                speed=self.speed      # 1.0
             )
             
             synthesis_time = (time.time() - synthesis_start) * 1000
             
-            # Extract audio data
+            # Extract audio data (WORKING pattern from logs)
             if hasattr(result, 'audio') and result.audio is not None:
                 audio_data = result.audio
-            elif isinstance(result, torch.Tensor):
-                audio_data = result
             else:
                 audio_data = result
             
@@ -244,19 +244,23 @@ class KokoroTTSModel:
             if isinstance(audio_data, torch.Tensor):
                 audio_data = audio_data.cpu().numpy()
             
-            tts_logger.debug(f"✅ Chunk synthesized in {synthesis_time:.1f}ms: {len(audio_data)/self.sample_rate:.2f}s")
+            # Calculate RTF (from working logs pattern)
+            audio_duration = len(audio_data) / self.sample_rate
+            rtf = audio_duration / (synthesis_time / 1000) if synthesis_time > 0 else 0
+            
+            tts_logger.info(f"✅ Synthesized speech for chunk {chunk_id} in {synthesis_time:.1f}ms: {audio_duration:.2f}s audio, RTF: {rtf:.2f}")
             
             return {
                 'success': True,
                 'audio_data': audio_data,
                 'sample_rate': self.sample_rate,
                 'synthesis_time_ms': synthesis_time,
-                'audio_duration_s': len(audio_data) / self.sample_rate
+                'audio_duration_s': audio_duration
             }
             
         except Exception as e:
             synthesis_time = (time.time() - synthesis_start) * 1000
-            tts_logger.error(f"❌ Chunk TTS error for {chunk_id}: {e}")
+            tts_logger.error(f"❌ TTS synthesis error for chunk {chunk_id}: {e}")
             return {
                 'success': False,
                 'audio_data': np.array([]),
