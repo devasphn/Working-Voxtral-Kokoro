@@ -91,12 +91,9 @@ class KokoroTTSModel:
             self.model_manager = KokoroModelManager("hexgrad/Kokoro-82M")
             
             tts_logger.info("🎵 Loading Kokoro pipeline with language code h")
-            # WORKING: With required positional arguments in correct order
+            # OFFICIAL: KPipeline requires lang_code as mandatory parameter
             from kokoro import KPipeline
-            self.pipeline = KPipeline(
-                repo_id="hexgrad/Kokoro-82M",
-                device=self.device
-            )
+            self.pipeline = KPipeline(lang_code='h')  # 'h' for Hindi (hf_alpha voice)
             
             try:
                 tts_logger.info("🎵 Testing Kokoro pipeline with sample text...")
