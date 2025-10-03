@@ -388,7 +388,7 @@ async def home(request: Request):
         </div>
         
         <div class="controls">
-            <button id="connectBtn" class="connect-btn" onclick="startConversation()">Connect</button>
+            <button id="connectBtn" class="connect-btn" onclick="connect()">Connect</button>
             <button id="streamBtn" class="stream-btn" onclick="startConversation()" disabled>Start Conversation</button>
             <button id="stopBtn" class="stop-btn" onclick="stopConversation()" disabled>Stop Conversation</button>
             <button id="speechToSpeechBtn" class="stream-btn" onclick="startSpeechToSpeech()" disabled>🗣️ Speech-to-Speech</button>
@@ -955,94 +955,52 @@ async def home(request: Request):
                 
                 ws = new WebSocket(wsUrl);
                 
-                ws.onopen = () => {
-                    updateStatus('Connected! Ready to start conversation.', 'success');
-                    updateConnectionStatus(true);
-                    document.getElementById('connectBtn').disabled = true;
-                    document.getElementById('streamBtn').disabled = false;
-                    log('WebSocket connection established');
-                };
-                
-                // CHUNKED STREAMING message handler
-                ws.onmessage = async (event) => {
-                    try {
+                return new Promise((resolve, reject) => {
+                    ws.onopen = () => {
+                        updateStatus('Connected! Ready to start conversation.', 'success');
+                        updateConnectionStatus(true);
+                        document.getElementById('connectBtn').disabled = true;
+                        document.getElementById('streamBtn').disabled = false;
+                        log('WebSocket connection established');
+                        resolve();
+                    };
+                    
+                    ws.onmessage = (event) => {
                         const data = JSON.parse(event.data);
-                        
-                        if (data.type === 'connection') {
-                            log('Connected to Voxtral CHUNKED STREAMING AI');
-                            updateConnectionStatus(true);
+                        handleWebSocketMessage(data);
+                    };
+                    
+                    ws.onclose = (event) => {
+                        updateStatus('Disconnected from server (Code: ' + event.code + ')', 'error');
+                        updateConnectionStatus(false);
+                        updateVadStatus('waiting');
+                        document.getElementById('connectBtn').disabled = false;
+                        document.getElementById('streamBtn').disabled = true;
+                        document.getElementById('stopBtn').disabled = true;
+                        log('WebSocket connection closed: ' + event.code);
+                    };
+                    
+                    ws.onerror = (error) => {
+                        updateStatus('Connection error - check console for details', 'error');
+                        updateConnectionStatus(false);
+                        updateVadStatus('waiting');
+                        log('WebSocket error occurred');
+                        console.error('WebSocket error:', error);
+                        reject(error);
+                    };
+                    
+                    // Timeout after 10 seconds
+                    setTimeout(() => {
+                        if (ws.readyState !== WebSocket.OPEN) {
+                            reject(new Error('Connection timeout'));
                         }
-                        else if (data.type === 'text_chunk') {
-                            // Display text chunk immediately
-                            log(`📝 Text Chunk ${data.chunk_id}: "${data.text}"`);
-                            updateResponseDisplay(data.text, data.is_final);
-                        }
-                        else if (data.type === 'audio_chunk_stream') {
-                            log(`🎵 Playing audio chunk ${data.chunk_id}`);
-                            
-                            try {
-                                // Ensure audio context is initialized
-                                const ctx = initializeAudioContext();
-                                if (ctx.state === 'suspended') {
-                                    await ctx.resume();
-                                }
-                                
-                                // Decode and play audio chunk immediately
-                                const audioBytes = Uint8Array.from(atob(data.audio_data), c => c.charCodeAt(0));
-                                const audioFloat32 = new Float32Array(audioBytes.buffer);
-                                
-                                // Create and play audio buffer
-                                const audioBuffer = ctx.createBuffer(1, audioFloat32.length, data.sample_rate);
-                                audioBuffer.copyToChannel(audioFloat32, 0);
-                                
-                                // Add to queue for sequential playback
-                                audioQueue.push({
-                                    buffer: audioBuffer,
-                                    chunk_id: data.chunk_id,
-                                    is_final: data.is_final
-                                });
-                                
-                                // Start playback if not already playing
-                                if (!isPlayingAudio) {
-                                    playNextAudioChunk();
-                                }
-                                
-                            } catch (audioError) {
-                                console.error('Audio playback error:', audioError);
-                                log(`❌ Audio playback failed: ${audioError.message}`);
-                            }
-                        }
-                        else if (data.type === 'error') {
-                            console.error('Server error:', data.error);
-                            log(`❌ Error: ${data.message}`);
-                        }
-                        
-                    } catch (error) {
-                        console.error('Message parsing error:', error);
-                    }
-                };
-                
-                ws.onclose = (event) => {
-                    updateStatus(`Disconnected from server (Code: ${event.code})`, 'error');
-                    updateConnectionStatus(false);
-                    updateVadStatus('waiting');
-                    document.getElementById('connectBtn').disabled = false;
-                    document.getElementById('streamBtn').disabled = true;
-                    document.getElementById('stopBtn').disabled = true;
-                    log(`WebSocket connection closed: ${event.code}`);
-                };
-                
-                ws.onerror = (error) => {
-                    updateStatus('Connection error - check console for details', 'error');
-                    updateConnectionStatus(false);
-                    updateVadStatus('waiting');
-                    log('WebSocket error occurred');
-                    console.error('WebSocket error:', error);
-                };
+                    }, 10000);
+                });
                 
             } catch (error) {
                 updateStatus('Failed to connect: ' + error.message, 'error');
                 log('Connection failed: ' + error.message);
+                throw error;
             }
         }
         
@@ -1457,6 +1415,24 @@ async def home(request: Request):
 
         
         async function startConversation() {
+            // CRITICAL: Ensure WebSocket is connected first
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('WebSocket not connected - establishing connection first...');
+                await connect();
+                
+                // Wait for connection to be established
+                await new Promise(resolve => {
+                    const checkConnection = () => {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            resolve();
+                        } else {
+                            setTimeout(checkConnection, 100);
+                        }
+                    };
+                    checkConnection();
+                });
+            }
+
             try {
                 log('Starting conversational audio streaming with VAD...');
                 updateStatus('Initializing microphone for conversation...', 'loading');
@@ -1475,7 +1451,7 @@ async def home(request: Request):
                 
                 audioContext = initializeAudioContext();
                 await audioContext.resume();
-                log(`Audio context created with sample rate: ${audioContext.sampleRate}`);
+                log('Audio context created with sample rate: ' + audioContext.sampleRate);
                 
                 audioWorkletNode = audioContext.createScriptProcessor(CHUNK_SIZE, 1, 1);
                 const source = audioContext.createMediaStreamSource(mediaStream);
@@ -1492,60 +1468,51 @@ async def home(request: Request):
                     const inputBuffer = event.inputBuffer;
                     const inputData = inputBuffer.getChannelData(0);
 
-                    // ULTRA-FAST volume update (reduced computation)
+                    // Update volume meter and VAD indicator
                     updateVolumeMeter(inputData);
 
-                    // OPTIMIZED: Only add significant audio data
-                    const rms = Math.sqrt(inputData.reduce((sum, val) => sum + val * val, 0) / inputData.length);
-                    if (rms > SILENCE_THRESHOLD) {
-                        continuousAudioBuffer.push(...inputData);
-                    }
+                    // Add to continuous buffer
+                    continuousAudioBuffer.push(...inputData);
 
+                    // Detect speech in current chunk
+                    const hasSpeech = detectSpeechInBuffer(inputData);
                     const now = Date.now();
-                    const hasSpeech = rms > SILENCE_THRESHOLD;
 
                     if (hasSpeech) {
                         if (!isSpeechActive) {
+                            // Speech started
                             speechStartTime = now;
                             isSpeechActive = true;
                             silenceStartTime = null;
+                            log('Speech detected - starting continuous capture');
                             updateVadStatus('speech');
                         }
                         lastSpeechTime = now;
-                    } else {
-                        if (isSpeechActive && !silenceStartTime) {
-                            silenceStartTime = now;
-                            updateVadStatus('silence');
-                        }
+                    } else if (isSpeechActive && !silenceStartTime) {
+                        // Silence started after speech
+                        silenceStartTime = now;
+                        updateVadStatus('silence');
                     }
 
-                    // ULTRA-AGGRESSIVE: Send smaller, faster chunks
-                    if (isSpeechActive && silenceStartTime &&
-                        (now - silenceStartTime >= END_OF_SPEECH_SILENCE) &&
+                    // Check if we should process accumulated speech
+                    if (isSpeechActive && silenceStartTime && 
+                        (now - silenceStartTime >= END_OF_SPEECH_SILENCE) && 
                         (lastSpeechTime - speechStartTime >= MIN_SPEECH_DURATION)) {
 
-                        // ULTRA-OPTIMIZED: Send SMALLER audio chunks for faster processing
-                        const maxSamples = SAMPLE_RATE * 3;  // Max 3 seconds of audio
-                        let audioToSend = continuousAudioBuffer;
-                        if (audioToSend.length > maxSamples) {
-                            // Keep only the most recent 3 seconds
-                            audioToSend = audioToSend.slice(-maxSamples);
-                            log(`Trimmed audio to ${maxSamples} samples (3s) for ultra-fast processing`);
-                        }
+                        // Process the complete utterance
+                        log(`Processing ULTRA-FAST utterance: ${continuousAudioBuffer.length} samples, ${lastSpeechTime - speechStartTime}ms duration`);
+                        sendCompleteUtterance(new Float32Array(continuousAudioBuffer));
 
-                        log(`Processing ULTRA-FAST utterance: ${audioToSend.length} samples, ${(lastSpeechTime - speechStartTime)}ms duration`);
-                        sendCompleteUtterance(new Float32Array(audioToSend));
-
-                        // Reset
+                        // Reset for next utterance
                         continuousAudioBuffer = [];
                         isSpeechActive = false;
                         speechStartTime = null;
-                        lastSpeechTime = null;  
+                        lastSpeechTime = null;
                         silenceStartTime = null;
-                        pendingResponse = true;
+                        pendingResponse = true; // Prevent processing until response received
                     }
 
-                    // ULTRA-OPTIMIZED: Much smaller max buffer (5 seconds vs 30 seconds)
+                    // Prevent buffer from growing too large (max 5 seconds)
                     const maxBufferSize = SAMPLE_RATE * 5;
                     if (continuousAudioBuffer.length > maxBufferSize) {
                         continuousAudioBuffer = continuousAudioBuffer.slice(-maxBufferSize);
@@ -1712,7 +1679,8 @@ async def home(request: Request):
         // Initialize on page load
         window.addEventListener('load', () => {
             detectEnvironment();
-            updateStatus('Ready to connect for conversation with VAD');
+            // Don't auto-connect - user must click Connect first
+            updateStatus('Ready to connect. Click Connect to start conversation.');
             log('Conversational application with VAD initialized');
         });
         
