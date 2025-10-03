@@ -388,7 +388,7 @@ async def home(request: Request):
         </div>
         
         <div class="controls">
-            <button id="connectBtn" class="connect-btn" onclick="connect()">Connect</button>
+            <button id="connectBtn" class="connect-btn" onclick="startConversation()">Connect</button>
             <button id="streamBtn" class="stream-btn" onclick="startConversation()" disabled>Start Conversation</button>
             <button id="stopBtn" class="stop-btn" onclick="stopConversation()" disabled>Stop Conversation</button>
             <button id="speechToSpeechBtn" class="stream-btn" onclick="startSpeechToSpeech()" disabled>🗣️ Speech-to-Speech</button>
@@ -580,6 +580,58 @@ async def home(request: Request):
         let selectedSpeed = 1.0;
         let currentConversationId = null;
         let speechToSpeechActive = false;
+
+        // Initialize audio context properly
+        function initializeAudioContext() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                    sampleRate: 16000,
+                    latencyHint: 'interactive'
+                });
+            }
+            return audioContext;
+        }
+        
+        // Sequential audio playback
+        function playNextAudioChunk() {
+            if (audioQueue.length === 0) {
+                isPlayingAudio = false;
+                return;
+            }
+            
+            isPlayingAudio = true;
+            const audioItem = audioQueue.shift();
+            const source = audioContext.createBufferSource();
+            source.buffer = audioItem.buffer;
+            source.connect(audioContext.destination);
+            
+            source.onended = () => {
+                log(`✅ Audio chunk ${audioItem.chunk_id} played`);
+                
+                // Play next chunk immediately
+                if (audioQueue.length > 0) {
+                    setTimeout(playNextAudioChunk, 50); // Small gap between chunks
+                } else {
+                    isPlayingAudio = false;
+                    log('🎉 All audio chunks played');
+                }
+            };
+            
+            source.start();
+        }
+        
+        // Update response display for chunked text
+        function updateResponseDisplay(text, isFinal) {
+            const responseElement = document.getElementById('response-display');
+            if (responseElement) {
+                if (isFinal) {
+                    responseElement.innerHTML = '<strong>Response:</strong> ' + text;
+                } else {
+                    responseElement.innerHTML += text + ' ';
+                }
+                responseElement.scrollTop = responseElement.scrollHeight;
+            }
+        }
 
         // ULTRA-LOW LATENCY frontend settings
         const CHUNK_SIZE = 2048;           // REDUCED: 2x smaller (was 4096)
@@ -1402,62 +1454,7 @@ async def home(request: Request):
             log('🎵 All audio chunks played');
         }
         
-        // FIXED: Audio context handling
-        let audioContext = null;
-        let audioQueue = [];
-        let isPlayingAudio = false;
-        
-        // Initialize audio context properly
-        function initializeAudioContext() {
-            if (!audioContext) {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)({
-                    sampleRate: 16000,
-                    latencyHint: 'interactive'
-                });
-            }
-            return audioContext;
-        }
-        
-        // Sequential audio playback
-        function playNextAudioChunk() {
-            if (audioQueue.length === 0) {
-                isPlayingAudio = false;
-                return;
-            }
-            
-            isPlayingAudio = true;
-            const audioItem = audioQueue.shift();
-            const source = audioContext.createBufferSource();
-            source.buffer = audioItem.buffer;
-            source.connect(audioContext.destination);
-            
-            source.onended = () => {
-                log(`✅ Audio chunk ${audioItem.chunk_id} played`);
-                
-                // Play next chunk immediately
-                if (audioQueue.length > 0) {
-                    setTimeout(playNextAudioChunk, 50); // Small gap between chunks
-                } else {
-                    isPlayingAudio = false;
-                    log('🎉 All audio chunks played');
-                }
-            };
-            
-            source.start();
-        }
-        
-        // Update response display for chunked text
-        function updateResponseDisplay(text, isFinal) {
-            const responseElement = document.getElementById('response-display');
-            if (responseElement) {
-                if (isFinal) {
-                    responseElement.innerHTML += '<br><strong>Complete:</strong> ' + text;
-                } else {
-                    responseElement.innerHTML += text + ' ';
-                }
-                responseElement.scrollTop = responseElement.scrollHeight;
-            }
-        }
+
         
         async function startConversation() {
             try {
