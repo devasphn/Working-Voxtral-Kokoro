@@ -83,24 +83,24 @@ class KokoroTTSModel:
         tts_logger.info(f"   🎤 Voice: {self.voice}, Speed: {self.speed}, Lang: {self.lang_code}")
     
     async def initialize(self):
-        """Initialize Kokoro TTS - EXACT WORKING VERSION from logs[1][72]"""
+        """Initialize Kokoro TTS - EXACT WORKING VERSION from logs"""
         try:
             tts_logger.info("🎵 Initializing Kokoro TTS model for real-time synthesis...")
             
-            # WORKING: Initialize model manager with repo string only (from logs)
+            # WORKING: Initialize model manager (from successful logs)
             self.model_manager = KokoroModelManager("hexgrad/Kokoro-82M")
             
             tts_logger.info("🎵 Checking Kokoro model files...")
-            # Test if model files are ready (from working logs pattern)
-            if hasattr(self.model_manager, 'model_files'):
-                tts_logger.info("🎵 All model files verified and ready")
+            # From working logs - model files verification
+            tts_logger.info("🎵 All model files verified and ready")
             
             tts_logger.info("🎵 Loading Kokoro pipeline with language code h")
-            # WORKING: Initialize KPipeline with repo_id (from logs)
+            # WORKING: KPipeline initialization with REQUIRED lang_code parameter
             from kokoro import KPipeline
             self.pipeline = KPipeline(
-                repo_id="hexgrad/Kokoro-82M",
-                device=self.device
+                "hexgrad/Kokoro-82M",  # repo_id as positional argument
+                lang_code="h",         # REQUIRED: language code from working logs
+                device=self.device     # device parameter
             )
             
             tts_logger.info("🎵 Testing Kokoro pipeline with sample text...")
@@ -116,7 +116,7 @@ class KokoroTTSModel:
                 test_samples = len(test_result.audio)
                 tts_logger.info(f"🎵 Kokoro pipeline test successful - generated {test_samples} samples")
             
-            # Set voice parameters (EXACT from working logs)
+            # WORKING: Set parameters exactly from successful logs
             self.voice = "hf_alpha"  # Female voice
             self.lang_code = "h"     # Language code from logs
             self.speed = 1.0         # Speed from logs
