@@ -1000,35 +1000,106 @@ async def home(request: Request):
         function handleWebSocketMessage(data) {
             log('Received message type: ' + data.type);
             
-            if (data.type === 'connection') {
-                log('Connected to Voxtral AI');
-                updateConnectionStatus(true);
-            }
-            else if (data.type === 'text_chunk') {
-                // ADDED: Handle chunked text responses
-                log('📝 Text Chunk: "' + data.text + '"');
-                displayPartialResponse(data.text, data.is_final || false);
-            }
-            else if (data.type === 'text_response') {
-                log('📝 Response: "' + data.text + '"');
-                displayResponse(data.text);
-                resetForNextInput(); // ADDED: Reset for next input
-            }
-            else if (data.type === 'audio_chunk_stream') {
-                // ADDED: Handle chunked audio responses
-                log('🎵 Playing audio chunk');
-                playAudioChunk(data);
-            }
-            else if (data.type === 'audio_response') {
-                log('🎵 Playing audio response');
-                playAudioChunk(data);
-            }
-            else if (data.type === 'error') {
-                log('❌ Server error: ' + (data.message || data.error));
-                resetForNextInput(); // ADDED: Reset on error
-            }
-            else {
-                log('Unknown message type: ' + data.type);
+            // Handle different message types
+            switch(data.type) {
+                case 'connection':
+                    log('Connected to Voxtral AI');
+                    updateConnectionStatus(true);
+                    break;
+                    
+                case 'text_chunk':
+                    // Handle chunked text responses
+                    log('📝 Text Chunk: "' + data.text + '"');
+                    displayPartialResponse(data.text, data.is_final || false);
+                    break;
+                    
+                case 'text_response':
+                    log('📝 Response: "' + data.text + '"');
+                    displayResponse(data.text);
+                    resetForNextInput();
+                    break;
+                    
+                case 'audio_chunk_stream':
+                    // Handle chunked audio responses
+                    log('🎵 Playing audio chunk');
+                    playAudioChunk(data);
+                    break;
+                    
+                case 'audio_response':
+                    log('🎵 Playing audio response');
+                    playAudioChunk(data);
+                    break;
+                    
+                case 'error':
+                    log('❌ Server error: ' + (data.message || data.error));
+                    resetForNextInput();
+                    break;
+                    
+                case 'transcription':
+                    if (speechToSpeechActive) {
+                        showTranscription(data.text, data.conversation_id);
+                        log(`Transcription received: "${data.text}"`);
+                    }
+                    break;
+
+                case 'response_text':
+                    if (speechToSpeechActive) {
+                        showResponseText(data.text, data.conversation_id);
+                        log(`AI response text: "${data.text}"`);
+                    }
+                    break;
+
+                case 'speech_response':
+                    if (speechToSpeechActive) {
+                        hideProcessingStatus();
+                        showAudioPlayback(
+                            data.audio_data,
+                            data.sample_rate,
+                            data.voice_used,
+                            data.speed_used,
+                            data.audio_duration_s
+                        );
+                        log(`Speech response received: ${data.audio_duration_s}s audio`);
+                    }
+                    break;
+
+                case 'conversation_complete':
+                    if (speechToSpeechActive) {
+                        hideProcessingStatus();
+
+                        // Add to conversation history with emotional context
+                        const transcription = document.getElementById('transcriptionText').textContent;
+                        const responseText = document.getElementById('responseText').textContent;
+
+                        if (transcription || responseText) {
+                            addToSpeechHistory(transcription, responseText, data.conversation_id, data.emotion_analysis);
+                        }
+
+                        // Display emotional analysis if available
+                        if (data.emotion_analysis) {
+                            showEmotionalAnalysis(data.emotion_analysis);
+                        }
+
+                        // Update metrics
+                        if (data.total_latency_ms) {
+                            latencySum += data.total_latency_ms;
+                            responseCount++;
+                            updateMetrics();
+
+                            if (data.total_latency_ms > LATENCY_WARNING_THRESHOLD) {
+                                document.getElementById('performanceWarning').style.display = 'block';
+                            }
+                        }
+
+                        log(`Conversation complete: ${data.total_latency_ms}ms (target: ${data.meets_target ? 'met' : 'exceeded'})`);
+                        if (data.emotion_analysis) {
+                            log(`Emotional context: ${data.emotion_analysis.emotional_reasoning}`);
+                        }
+                    }
+                    break;
+
+                default:
+                    log(`Unknown message type: ${data.type}`);
             }
         }
 
@@ -1107,74 +1178,6 @@ async def home(request: Request):
             silenceStartTime = null;
             
             log('🔄 Ready for next input');
-        }
-
-                case 'transcription':
-                    if (speechToSpeechActive) {
-                        showTranscription(data.text, data.conversation_id);
-                        log(`Transcription received: "${data.text}"`);
-                    }
-                    break;
-
-                case 'response_text':
-                    if (speechToSpeechActive) {
-                        showResponseText(data.text, data.conversation_id);
-                        log(`AI response text: "${data.text}"`);
-                    }
-                    break;
-
-                case 'speech_response':
-                    if (speechToSpeechActive) {
-                        hideProcessingStatus();
-                        showAudioPlayback(
-                            data.audio_data,
-                            data.sample_rate,
-                            data.voice_used,
-                            data.speed_used,
-                            data.audio_duration_s
-                        );
-                        log(`Speech response received: ${data.audio_duration_s}s audio`);
-                    }
-                    break;
-
-                case 'conversation_complete':
-                    if (speechToSpeechActive) {
-                        hideProcessingStatus();
-
-                        // Add to conversation history with emotional context
-                        const transcription = document.getElementById('transcriptionText').textContent;
-                        const responseText = document.getElementById('responseText').textContent;
-
-                        if (transcription || responseText) {
-                            addToSpeechHistory(transcription, responseText, data.conversation_id, data.emotion_analysis);
-                        }
-
-                        // Display emotional analysis if available
-                        if (data.emotion_analysis) {
-                            showEmotionalAnalysis(data.emotion_analysis);
-                        }
-
-                        // Update metrics
-                        if (data.total_latency_ms) {
-                            latencySum += data.total_latency_ms;
-                            responseCount++;
-                            updateMetrics();
-
-                            if (data.total_latency_ms > LATENCY_WARNING_THRESHOLD) {
-                                document.getElementById('performanceWarning').style.display = 'block';
-                            }
-                        }
-
-                        log(`Conversation complete: ${data.total_latency_ms}ms (target: ${data.meets_target ? 'met' : 'exceeded'})`);
-                        if (data.emotion_analysis) {
-                            log(`Emotional context: ${data.emotion_analysis.emotional_reasoning}`);
-                        }
-                    }
-                    break;
-
-                default:
-                    log(`Unknown message type: ${data.type}`);
-            }
         }
 
         function handleAudioResponse(data) {

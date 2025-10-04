@@ -31,10 +31,12 @@ class ServerConfig(BaseModel):
 
 class ModelConfig(BaseModel):
     name: str = "mistralai/Voxtral-Mini-3B-2507"
-    cache_dir: str = "/workspace/model_cache"
+    cache_dir: str = "./model_cache"
     device: str = "cuda"
     torch_dtype: str = "bfloat16"
-    max_memory_per_gpu: str = "6GB"
+    max_memory_per_gpu: str = "8GB"
+    ultra_fast_mode: bool = True
+    warmup_enabled: bool = True
 
 class AudioConfig(BaseModel):
     sample_rate: int = 16000
@@ -49,11 +51,22 @@ class SpectrogramConfig(BaseModel):
     win_length: int = 400
     n_fft: int = 400
 
+class VADConfig(BaseModel):
+    """Voice Activity Detection configuration"""
+    threshold: float = 0.005
+    min_voice_duration_ms: int = 200
+    min_silence_duration_ms: int = 400
+    chunk_size_ms: int = 20
+    overlap_ms: int = 2
+    sensitivity: str = "ultra_high"
+
 class StreamingConfig(BaseModel):
+    enabled: bool = True
+    chunk_mode: str = "sentence_streaming"
     max_connections: int = 100
     buffer_size: int = 4096
     timeout_seconds: int = 300
-    latency_target_ms: int = 300  # Updated to match sub-300ms requirement
+    latency_target_ms: int = 50  # ULTRA-AGGRESSIVE: 10x more aggressive
     
 class PerformanceConfig(BaseModel):
     """Performance monitoring and optimization configuration"""
@@ -125,6 +138,7 @@ class Config(BaseSettings):
     model: ModelConfig = ModelConfig()
     audio: AudioConfig = AudioConfig()
     spectrogram: SpectrogramConfig = SpectrogramConfig()
+    vad: VADConfig = VADConfig()
     streaming: StreamingConfig = StreamingConfig()
     logging: LoggingConfig = LoggingConfig()
     tts: TTSConfig = TTSConfig()

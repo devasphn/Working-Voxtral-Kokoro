@@ -9,7 +9,7 @@ model:
   name: "mistralai/Voxtral-Mini-3B-2507"
   cache_dir: "./model_cache"
   device: "cuda"
-  torch_dtype: "float16" # CRITICAL: Maximum speed
+  torch_dtype: "bfloat16" # FIXED: Changed from float16 to bfloat16 for better stability
   max_memory_per_gpu: "8GB" # INCREASED: Allow more memory for speed
   # ULTRA-FAST settings
   ultra_fast_mode: true

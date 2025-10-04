@@ -14,6 +14,7 @@ import traceback
 
 from src.models.voxtral_model_realtime import voxtral_model
 from src.models.audio_processor_realtime import AudioProcessor
+from src.models.speech_to_speech_pipeline import speech_to_speech_pipeline
 from src.utils.config import config
 from src.utils.logging_config import logger
 
