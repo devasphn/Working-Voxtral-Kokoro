@@ -1569,8 +1569,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     
                     # Process with CHUNKED STREAMING
                     unified_manager = get_unified_manager()
-                    
+
                     try:
+                        # Track processing time for metrics
+                        processing_start_time = time.time()
+
                         # Use CHUNKED STREAMING method
                         chunk_counter = 0
                         async for text_chunk in unified_manager.voxtral_model.process_realtime_chunk_streaming(
@@ -1587,9 +1590,22 @@ async def websocket_endpoint(websocket: WebSocket):
                                 })
                                 streaming_logger.debug(f"📤 Text chunk {chunk_counter}: '{text_chunk['text']}'")
                                 chunk_counter += 1
-                        
-                        streaming_logger.info(f"✅ CHUNKED STREAMING complete for {chunk_id}: {chunk_counter} chunks")
-                        
+
+                        # Calculate total latency
+                        total_latency_ms = int((time.time() - processing_start_time) * 1000)
+                        streaming_logger.info(f"✅ CHUNKED STREAMING complete for {chunk_id}: {chunk_counter} chunks in {total_latency_ms}ms")
+
+                        # CRITICAL FIX: Send conversation_complete message to reset VAD state
+                        # This allows the frontend to call resetForNextInput() and enable continuous streaming
+                        await websocket.send_json({
+                            "type": "conversation_complete",
+                            "chunk_id": chunk_id,
+                            "total_chunks": chunk_counter,
+                            "total_latency_ms": total_latency_ms,
+                            "meets_target": total_latency_ms < 500
+                        })
+                        streaming_logger.info(f"📨 Sent conversation_complete message for {chunk_id} ({total_latency_ms}ms)")
+
                     except Exception as e:
                         streaming_logger.error(f"❌ CHUNKED STREAMING error for {chunk_id}: {e}")
                         await websocket.send_json({
