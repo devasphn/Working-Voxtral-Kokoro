@@ -389,7 +389,8 @@ class VoxtralModel:
             
             # VERIFIED: Official processor call from documentation[25]
             inputs = self.processor.apply_chat_template(conversation, return_tensors="pt")
-            inputs = inputs.to(self.device, dtype=torch.bfloat16)
+            # CRITICAL FIX: Use float16 to match model dtype (model loaded with float16)
+            inputs = inputs.to(self.device, dtype=torch.float16)
             
             # ULTRA-FAST generation (in the process_realtime_chunk method)
             with torch.no_grad():
@@ -397,17 +398,21 @@ class VoxtralModel:
                     **inputs,
                     max_new_tokens=10,         # ULTRA-SHORT for maximum speed
                     min_new_tokens=1,
-                    do_sample=False,           # Deterministic
-                    num_beams=1,               # Single beam
-                    use_cache=True,
+                    do_sample=False,           # Deterministic (faster than sampling)
+                    num_beams=1,               # Single beam (no beam search overhead)
+                    use_cache=True,            # CRITICAL: Enable KV cache for speed
                     pad_token_id=self.processor.tokenizer.eos_token_id,
                     # ULTRA-SPEED optimizations
-                    temperature=1.0,           # Fast sampling
-                    top_p=0.9,                # Limited sampling
-                    top_k=10,                 # Very limited
-                    repetition_penalty=1.0,    # No penalty
-                    length_penalty=0.8,        # Prefer shorter responses
-                    no_repeat_ngram_size=2     # Minimal repeat prevention
+                    temperature=1.0,
+                    top_p=0.9,
+                    top_k=10,
+                    repetition_penalty=1.0,
+                    length_penalty=0.8,
+                    no_repeat_ngram_size=2,
+                    # CRITICAL: Disable unnecessary features for speed
+                    output_scores=False,       # Don't compute scores
+                    return_dict_in_generate=False,  # Simpler output format
+                    synced_gpus=False          # No multi-GPU sync overhead
                 )
             
             inference_time = (time.time() - inference_start) * 1000
@@ -546,7 +551,8 @@ class VoxtralModel:
             ]
             
             inputs = self.processor.apply_chat_template(conversation, return_tensors="pt")
-            inputs = inputs.to(self.device, dtype=torch.bfloat16)
+            # CRITICAL FIX: Use float16 to match model dtype (model loaded with float16)
+            inputs = inputs.to(self.device, dtype=torch.float16)
             
             # CHUNKED GENERATION with streaming
             chunk_index = 0
@@ -564,12 +570,15 @@ class VoxtralModel:
                 generation_kwargs = {
                     **inputs,
                     "max_new_tokens": 50,
-                    "do_sample": True,
-                    "temperature": 0.7,
+                    "do_sample": False,        # CRITICAL: Deterministic is faster than sampling
+                    "temperature": 1.0,        # Not used with do_sample=False
                     "top_p": 0.9,
                     "streamer": streamer,
                     "pad_token_id": self.processor.tokenizer.eos_token_id,
-                    "use_cache": True
+                    "use_cache": True,         # CRITICAL: Enable KV cache
+                    "output_scores": False,    # Don't compute scores
+                    "return_dict_in_generate": False,  # Simpler output
+                    "synced_gpus": False       # No multi-GPU overhead
                 }
                 
                 # Start generation in background thread

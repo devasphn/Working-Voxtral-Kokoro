@@ -1276,7 +1276,7 @@ async def home(request: Request):
 
                     // Detect speech in current chunk
                     const hasSpeech = detectSpeechInBuffer(inputData);
-                    const now = Date.now();
+                    // FIXED: Reuse 'now' from line 1253 instead of redeclaring
 
                     if (hasSpeech) {
                         if (!isSpeechActive) {
