@@ -113,23 +113,23 @@ class UnifiedModelManager:
                 unified_logger.warning("⚠️ Ultra-fast mode setup had issues but continuing...")
             
             # Warmup Voxtral with progressively smaller inputs
-            warmup_audio_lengths = [8000, 4000, 2000, 1000]  # 0.5s to 0.0625s
+            # CRITICAL: Increased iterations to allow GPU to warm up properly
+            # More iterations = better GPU utilization and faster subsequent inferences
+            warmup_audio_lengths = [8000, 4000, 2000, 1000, 16000, 16000, 16000]  # 7 iterations
             for i, length in enumerate(warmup_audio_lengths):
                 dummy_audio = torch.randn(length, device=self.gpu_memory_manager.device, dtype=torch.float16) * 0.1
                 start_time = time.time()
                 # Use the existing process_realtime_chunk method
                 result = await self.voxtral_model.process_realtime_chunk(
-                    dummy_audio, 
+                    dummy_audio,
                     chunk_id=f"warmup_{i}",
                     mode="conversation"
                 )
                 warmup_time = (time.time() - start_time) * 1000
-                unified_logger.info(f"🔥 Warmup {i+1}/4: {length} samples -> {warmup_time:.1f}ms")
-                
-                # Break early if we achieve target
-                if warmup_time < 500:
-                    unified_logger.info(f"✅ Target achieved at warmup {i+1} - stopping early")
-                    break
+                unified_logger.info(f"🔥 Warmup {i+1}/7: {length} samples -> {warmup_time:.1f}ms")
+
+                # Don't break early - let GPU fully warm up
+                # Early breaking prevents proper GPU optimization
             
             # Final warmup with typical speech
             typical_audio = torch.randn(16000, device=self.gpu_memory_manager.device, dtype=torch.float16) * 0.05  # 1 second, normal volume

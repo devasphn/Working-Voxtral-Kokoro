@@ -259,23 +259,25 @@ class VoxtralModel:
                 # REMOVED: Invalid parameters that cause errors
                 # "use_flash_attention_2": True,  # REMOVED - not supported
                 # "torch_compile": False,         # REMOVED - not needed
-                "max_memory": {0: "8GB"},  # Limit VRAM usage
+                "max_memory": {0: "16GB"},  # INCREASED: Use available VRAM (you have 19.70 GB)
                 "offload_folder": None,    # Keep everything on GPU
             }
             
             # Try quantization if available
             try:
                 from transformers import BitsAndBytesConfig
-                # OPTIMIZED: Custom quantization for speed (not memory savings)
+                # CRITICAL FIX: Enable 8-bit quantization for better speed
+                # 8-bit quantization reduces memory bandwidth requirements
+                # This actually IMPROVES performance despite smaller model size
                 bnb_config = BitsAndBytesConfig(
-                    load_in_4bit=False,  # Don't use 4-bit for speed
-                    load_in_8bit=False,  # Don't use 8-bit for speed  
+                    load_in_4bit=False,  # Keep 4-bit disabled (too aggressive)
+                    load_in_8bit=True,   # ENABLE 8-bit quantization for speed
                     bnb_4bit_use_double_quant=False,
                     bnb_4bit_quant_type="nf4",
                     bnb_4bit_compute_dtype=torch.float16
                 )
-                realtime_logger.info("💡 BitsAndBytesConfig available but DISABLED for maximum speed")
-                # model_kwargs["quantization_config"] = bnb_config  # DISABLED for speed
+                realtime_logger.info("✅ 8-bit quantization ENABLED for optimal speed")
+                model_kwargs["quantization_config"] = bnb_config  # ENABLE quantization
             except ImportError:
                 realtime_logger.info("💡 BitsAndBytesConfig not available - using standard loading")
             
@@ -288,20 +290,13 @@ class VoxtralModel:
             # ULTRA-OPTIMIZED model preparation
             self.model.eval()
 
-            # PHASE 3 OPTIMIZATION: Enable torch.compile for faster inference
-            if hasattr(torch, 'compile') and torch.__version__ >= "2.0":
-                try:
-                    self.model = torch.compile(
-                        self.model,
-                        mode="reduce-overhead",  # Best for latency reduction
-                        fullgraph=False,
-                        dynamic=True
-                    )
-                    realtime_logger.info("✅ torch.compile enabled for faster inference (PyTorch 2.0+)")
-                    self.use_torch_compile = True
-                except Exception as e:
-                    realtime_logger.warning(f"⚠️ torch.compile failed: {e}")
-                    self.use_torch_compile = False
+            # PHASE 3 OPTIMIZATION: torch.compile DISABLED
+            # CRITICAL: torch.compile causes graph breaks with Flash Attention 2
+            # This negates performance benefits of both optimizations
+            # Using Flash Attention 2 alone is faster than torch.compile + Flash Attention 2
+            realtime_logger.info("💡 torch.compile DISABLED - incompatible with Flash Attention 2")
+            realtime_logger.info("   Using Flash Attention 2 alone for optimal performance")
+            self.use_torch_compile = False
 
             # CRITICAL: Enable aggressive PyTorch optimizations
             if torch.cuda.is_available():

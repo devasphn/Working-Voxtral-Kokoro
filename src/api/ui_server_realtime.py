@@ -776,6 +776,8 @@ async def home(request: Request):
                     break;
 
                 case 'conversation_complete':
+                    log('📨 [WEBSOCKET] Received conversation_complete message');
+
                     // Update metrics
                     if (data.total_latency_ms) {
                         latencySum += data.total_latency_ms;
@@ -791,7 +793,9 @@ async def home(request: Request):
 
                     // CRITICAL FIX: Reset VAD state for continuous streaming
                     // This allows the next utterance to be detected and processed
+                    log('🔄 [WEBSOCKET] Calling resetForNextInput() to enable continuous streaming');
                     resetForNextInput();
+                    log('✅ [WEBSOCKET] resetForNextInput() completed');
                     break;
 
                 default:
@@ -864,6 +868,11 @@ async def home(request: Request):
 
         // ADDED: Reset system for next input
         function resetForNextInput() {
+            log('🔄 [RESET] Starting VAD state reset...');
+            log(`   - pendingResponse: ${pendingResponse} → false`);
+            log(`   - isSpeechActive: ${isSpeechActive} → false`);
+            log(`   - continuousAudioBuffer length: ${continuousAudioBuffer.length} → 0`);
+
             pendingResponse = false;
             updateVadStatus('silence');
 
@@ -877,7 +886,7 @@ async def home(request: Request):
             continuousAudioBuffer = [];
             lastResponseText = '';
 
-            log('🔄 Ready for next input');
+            log('✅ [RESET] VAD state reset complete - ready for next utterance');
         }
 
         function handleAudioResponse(data) {
@@ -1240,7 +1249,21 @@ async def home(request: Request):
                 let lastChunkTime = Date.now();
 
                 audioWorkletNode.onaudioprocess = (event) => {
-                    if (!isStreaming || pendingResponse) return;
+                    // CRITICAL DEBUG: Log state on every audio process event
+                    const now = Date.now();
+                    if (now - lastVadUpdate > 5000) {  // Log every 5 seconds to avoid spam
+                        log(`[VAD DEBUG] isStreaming=${isStreaming}, pendingResponse=${pendingResponse}, isSpeechActive=${isSpeechActive}`);
+                        lastVadUpdate = now;
+                    }
+
+                    if (!isStreaming || pendingResponse) {
+                        if (!isStreaming) {
+                            // Silently skip - streaming not active
+                        } else if (pendingResponse) {
+                            // Silently skip - waiting for response
+                        }
+                        return;
+                    }
 
                     const inputBuffer = event.inputBuffer;
                     const inputData = inputBuffer.getChannelData(0);
