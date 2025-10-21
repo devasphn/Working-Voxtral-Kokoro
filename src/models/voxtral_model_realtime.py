@@ -371,7 +371,6 @@ class VoxtralModel:
             inference_start = time.time()
             
             # WORKING: Use OFFICIAL processor format from Hugging Face docs[25]
-            # CRITICAL FIX: Ask for transcription in English, not response
             conversation = [
                 {
                     "role": "user",
@@ -382,7 +381,7 @@ class VoxtralModel:
                         },
                         {
                             "type": "text",
-                            "text": "Transcribe what you heard in English. Only provide the transcription, nothing else."
+                            "text": "Respond naturally and briefly to what you heard."
                         }
                     ]
                 }
@@ -541,13 +540,12 @@ class VoxtralModel:
             inference_start = time.time()
             
             # Create conversation
-            # CRITICAL FIX: Ask for transcription in English, not response
             conversation = [
                 {
                     "role": "user",
                     "content": [
                         {"type": "audio", "path": tmp_path},
-                        {"type": "text", "text": "Transcribe what you heard in English. Only provide the transcription, nothing else."}
+                        {"type": "text", "text": "Respond naturally and conversationally."}
                     ]
                 }
             ]

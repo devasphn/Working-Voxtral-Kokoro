@@ -545,9 +545,20 @@ async def home(request: Request):
         const END_OF_SPEECH_SILENCE = 1200;   // INCREASED: End of speech silence (was 800)
         const SPEECH_THRESHOLD = 0.025;     // INCREASED: Speech threshold (was 0.01)
         const LATENCY_WARNING_THRESHOLD = 1000;
-        
+
         function log(message, type = 'info') {
             console.log(`[Voxtral VAD] ${message}`);
+        }
+
+        // CRITICAL FIX: Define missing updateMetrics function
+        function updateMetrics() {
+            if (responseCount > 0) {
+                const avgLatency = Math.round(latencySum / responseCount);
+                const latencyMetricElement = document.getElementById('latencyMetric');
+                if (latencyMetricElement) {
+                    latencyMetricElement.textContent = avgLatency;
+                }
+            }
         }
 
         // Enhanced VAD function for continuous speech detection
