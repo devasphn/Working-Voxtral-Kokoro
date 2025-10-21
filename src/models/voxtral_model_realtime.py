@@ -329,25 +329,25 @@ class VoxtralModel:
             raise
     
     async def process_realtime_chunk(self, audio_data: Union[torch.Tensor, np.ndarray], chunk_id: str, mode: str = "conversation") -> Dict[str, Any]:
-        """Process real-time audio chunk - EXACT WORKING VERSION from logs[1]"""
+        """Process real-time audio chunk - OPTIMIZED for accuracy and speed"""
         if not self.is_initialized:
             raise RuntimeError("VoxtralModel not initialized")
-        
+
         chunk_start_time = time.time()
         realtime_logger.debug(f"🎵 Processing conversational chunk {chunk_id} with {len(audio_data)} samples")
-        
+
         try:
-            # Convert to proper format (EXACT working approach from logs[1])
+            # Convert to proper format
             if isinstance(audio_data, torch.Tensor):
                 audio_numpy = audio_data.cpu().numpy().astype(np.float32)
             else:
                 audio_numpy = audio_data.astype(np.float32)
-            
-            # Speech detection (EXACT working approach from logs[1])
+
+            # Speech detection with improved thresholds
             energy = np.sqrt(np.mean(audio_numpy ** 2))
             duration_s = len(audio_numpy) / config.audio.sample_rate
-            realtime_logger.debug(f"✅ Speech detected - Energy: {energy:.6f}, Duration: {duration_s:.2f}s, Variation: {energy:.6f}")
-            
+            realtime_logger.debug(f"✅ Speech detected - Energy: {energy:.6f}, Duration: {duration_s:.2f}s")
+
             if energy < self.silence_threshold:
                 realtime_logger.debug(f"Audio energy {energy:.6f} below silence threshold {self.silence_threshold}")
                 return {
@@ -356,88 +356,92 @@ class VoxtralModel:
                     'processing_time_ms': (time.time() - chunk_start_time) * 1000,
                     'error': 'No speech detected'
                 }
-            
+
             realtime_logger.debug(f"🔊 Audio stats for chunk {chunk_id}: length={len(audio_numpy)}, max_val={np.max(np.abs(audio_numpy)):.4f}")
-            
-            # CRITICAL: Write to temporary file (EXACT working approach from logs[1])
+
+            # OPTIMIZED: Write to temporary file with minimal overhead
             import tempfile
             import soundfile as sf
             with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
                 tmp_path = tmp_file.name
             sf.write(tmp_path, audio_numpy, config.audio.sample_rate)
             realtime_logger.debug(f"📁 Written chunk {chunk_id} to temporary file {tmp_path}")
-            
+
             realtime_logger.debug(f"🔊 Starting inference for chunk {chunk_id}")
             inference_start = time.time()
-            
-            # WORKING: Use OFFICIAL processor format from Hugging Face docs[25]
+
+            # CRITICAL: Use mode parameter to determine prompt
+            # mode="conversation" -> Generate conversational responses
+            # mode="transcribe" -> Transcribe audio only
+            if mode == "conversation":
+                prompt_text = "Respond naturally and briefly to what you heard."
+            else:
+                prompt_text = "Transcribe exactly what you heard. Be precise with proper nouns and technical terms."
+
             conversation = [
                 {
                     "role": "user",
                     "content": [
                         {
                             "type": "audio",
-                            "path": tmp_path  # Use temp file path
+                            "path": tmp_path
                         },
                         {
                             "type": "text",
-                            "text": "Respond naturally and briefly to what you heard."
+                            "text": prompt_text
                         }
                     ]
                 }
             ]
-            
-            # VERIFIED: Official processor call from documentation[25]
+
+            # Apply chat template
             inputs = self.processor.apply_chat_template(conversation, return_tensors="pt")
-            # CRITICAL FIX: Use float16 to match model dtype (model loaded with float16)
             inputs = inputs.to(self.device, dtype=torch.float16)
-            
-            # ULTRA-FAST generation (in the process_realtime_chunk method)
+
+            # OPTIMIZED generation parameters for accuracy
             with torch.no_grad():
                 outputs = self.model.generate(
                     **inputs,
-                    max_new_tokens=10,         # ULTRA-SHORT for maximum speed
+                    max_new_tokens=100,        # Allow longer transcriptions for accuracy
                     min_new_tokens=1,
-                    do_sample=False,           # Deterministic (faster than sampling)
-                    num_beams=1,               # Single beam (no beam search overhead)
-                    use_cache=True,            # CRITICAL: Enable KV cache for speed
+                    do_sample=False,           # Deterministic
+                    num_beams=1,               # Single beam
+                    use_cache=True,            # KV cache
                     pad_token_id=self.processor.tokenizer.eos_token_id,
-                    # ULTRA-SPEED optimizations
                     temperature=1.0,
-                    top_p=0.9,
-                    top_k=10,
+                    top_p=0.95,                # Slightly higher for better accuracy
+                    top_k=50,                  # Increased for better word selection
                     repetition_penalty=1.0,
-                    length_penalty=0.8,
-                    no_repeat_ngram_size=2,
-                    # CRITICAL: Disable unnecessary features for speed
-                    output_scores=False,       # Don't compute scores
-                    return_dict_in_generate=False,  # Simpler output format
-                    synced_gpus=False          # No multi-GPU sync overhead
+                    length_penalty=1.0,        # Neutral length penalty
+                    no_repeat_ngram_size=3,
+                    output_scores=False,
+                    return_dict_in_generate=False,
+                    synced_gpus=False
                 )
-            
+
             inference_time = (time.time() - inference_start) * 1000
             realtime_logger.debug(f"⚡ Inference completed for chunk {chunk_id} in {inference_time:.1f}ms")
-            
-            # Decode response (WORKING approach from logs[1])
+
+            # Decode response
             response_text = self.processor.batch_decode(outputs[:, inputs.input_ids.shape[1]:], skip_special_tokens=True)[0].strip()
-            
+
             # Clean up temp file
             try:
                 import os
                 os.unlink(tmp_path)
             except:
                 pass
-            
+
             total_time = (time.time() - chunk_start_time) * 1000
             realtime_logger.info(f"✅ Chunk {chunk_id} processed in {total_time:.1f}ms: '{response_text[:50]}...'")
-            
+
             return {
                 'success': True,
                 'text': response_text,
                 'processing_time_ms': total_time,
                 'inference_time_ms': inference_time
             }
-            
+
         except Exception as e:
             error_time = (time.time() - chunk_start_time) * 1000
             realtime_logger.error(f"❌ Error processing chunk {chunk_id}: {e}")
@@ -538,49 +542,57 @@ class VoxtralModel:
             
             realtime_logger.debug(f"🔊 Starting CHUNKED inference for chunk {chunk_id}")
             inference_start = time.time()
-            
-            # Create conversation
+
+            # CRITICAL: Use mode parameter to determine prompt
+            # mode="conversation" -> Generate conversational responses
+            # mode="transcribe" -> Transcribe audio only
+            if mode == "conversation":
+                prompt_text = "Respond naturally and conversationally."
+            else:
+                prompt_text = "Transcribe exactly what you heard. Be precise with proper nouns and technical terms."
+
+            # Create conversation with appropriate prompt
             conversation = [
                 {
                     "role": "user",
                     "content": [
                         {"type": "audio", "path": tmp_path},
-                        {"type": "text", "text": "Respond naturally and conversationally."}
+                        {"type": "text", "text": prompt_text}
                     ]
                 }
             ]
-            
+
             inputs = self.processor.apply_chat_template(conversation, return_tensors="pt")
-            # CRITICAL FIX: Use float16 to match model dtype (model loaded with float16)
             inputs = inputs.to(self.device, dtype=torch.float16)
-            
-            # CHUNKED GENERATION with streaming
+
+            # OPTIMIZED CHUNKED GENERATION with streaming
             chunk_index = 0
             generated_text = ""
-            
+
             with torch.no_grad():
                 # Generate with streaming enabled
                 streamer = TextIteratorStreamer(
-                    self.processor.tokenizer, 
+                    self.processor.tokenizer,
                     timeout=60.0,
                     skip_prompt=True,
                     skip_special_tokens=True
                 )
-                
+
                 generation_kwargs = {
                     **inputs,
-                    "max_new_tokens": 50,
-                    "do_sample": False,        # CRITICAL: Deterministic is faster than sampling
-                    "temperature": 1.0,        # Not used with do_sample=False
-                    "top_p": 0.9,
+                    "max_new_tokens": 100,    # Allow longer transcriptions
+                    "do_sample": False,        # Deterministic
+                    "temperature": 1.0,
+                    "top_p": 0.95,             # Slightly higher for accuracy
+                    "top_k": 50,               # Increased for better word selection
                     "streamer": streamer,
                     "pad_token_id": self.processor.tokenizer.eos_token_id,
-                    "use_cache": True,         # CRITICAL: Enable KV cache
-                    "output_scores": False,    # Don't compute scores
-                    "return_dict_in_generate": False,  # Simpler output
-                    "synced_gpus": False       # No multi-GPU overhead
+                    "use_cache": True,         # KV cache
+                    "output_scores": False,
+                    "return_dict_in_generate": False,
+                    "synced_gpus": False
                 }
-                
+
                 # Start generation in background thread
                 import threading
                 generation_thread = threading.Thread(
@@ -588,24 +600,23 @@ class VoxtralModel:
                     kwargs=generation_kwargs
                 )
                 generation_thread.start()
-                
+
                 # Stream chunks as they're generated
-                current_chunk = ""
                 word_buffer = []
-                
+
                 for new_text in streamer:
                     if new_text:
                         words = new_text.split()
                         word_buffer.extend(words)
-                        
-                        # Send chunks of 3-5 words for natural speech
-                        if len(word_buffer) >= 4:
-                            chunk_text = " ".join(word_buffer[:4])
-                            word_buffer = word_buffer[4:]
+
+                        # Send chunks of 5-7 words for natural speech
+                        if len(word_buffer) >= 6:
+                            chunk_text = " ".join(word_buffer[:6])
+                            word_buffer = word_buffer[6:]
                             generated_text += chunk_text + " "
-                            
+
                             realtime_logger.debug(f"🎯 Streaming chunk {chunk_index}: '{chunk_text}'")
-                            
+
                             yield {
                                 'success': True,
                                 'text': chunk_text.strip(),
@@ -614,12 +625,12 @@ class VoxtralModel:
                                 'processing_time_ms': (time.time() - chunk_start_time) * 1000
                             }
                             chunk_index += 1
-                
+
                 # Send remaining words
                 if word_buffer:
                     final_text = " ".join(word_buffer)
                     generated_text += final_text
-                    
+
                     yield {
                         'success': True,
                         'text': final_text.strip(),

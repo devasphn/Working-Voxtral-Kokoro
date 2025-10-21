@@ -1565,15 +1565,22 @@ async def websocket_endpoint(websocket: WebSocket):
                 if message_type == "audio_chunk":
                     chunk_id = message.get("chunk_id", int(time.time() * 1000))
                     streaming_logger.debug(f"[CHUNKED] Processing chunk {chunk_id} for {client_id}")
-                    
-                    # Decode audio data
+
+                    # Decode audio data with improved quality handling
                     try:
                         audio_data_b64 = message.get("audio_data", "")
                         if not audio_data_b64:
                             continue
-                        
+
                         audio_bytes = base64.b64decode(audio_data_b64)
                         audio_data = np.frombuffer(audio_bytes, dtype=np.float32)
+
+                        # OPTIMIZATION: Normalize audio to prevent clipping and improve quality
+                        max_val = np.max(np.abs(audio_data))
+                        if max_val > 0:
+                            audio_data = audio_data / max_val * 0.95  # Normalize to 0.95 to prevent clipping
+
+                        streaming_logger.debug(f"📊 Audio stats: length={len(audio_data)}, max={np.max(np.abs(audio_data)):.4f}, energy={np.sqrt(np.mean(audio_data**2)):.6f}")
                     except Exception as e:
                         streaming_logger.error(f"❌ Audio decoding error: {e}")
                         continue
@@ -1582,8 +1589,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     unified_manager = get_unified_manager()
 
                     try:
-                        # Track processing time for metrics
+                        # Track processing time for metrics and profiling
                         processing_start_time = time.time()
+                        first_chunk_time = None
+                        chunk_times = []
 
                         # Use CHUNKED STREAMING method
                         chunk_counter = 0
@@ -1591,20 +1600,29 @@ async def websocket_endpoint(websocket: WebSocket):
                             audio_data, chunk_id, mode="conversation"
                         ):
                             if text_chunk['success'] and text_chunk['text'].strip():
+                                # Track first chunk latency
+                                if first_chunk_time is None:
+                                    first_chunk_time = time.time() - processing_start_time
+                                    streaming_logger.info(f"⚡ First chunk latency: {first_chunk_time*1000:.1f}ms")
+
+                                chunk_time = time.time() - processing_start_time
+                                chunk_times.append(chunk_time)
+
                                 # Send text chunk immediately
                                 await websocket.send_json({
                                     "type": "text_chunk",
                                     "chunk_id": f"{chunk_id}_{chunk_counter}",
                                     "text": text_chunk['text'],
                                     "is_final": text_chunk.get('is_final', False),
-                                    "processing_time_ms": text_chunk.get('processing_time_ms', 0)
+                                    "processing_time_ms": int(chunk_time * 1000)
                                 })
-                                streaming_logger.debug(f"📤 Text chunk {chunk_counter}: '{text_chunk['text']}'")
+                                streaming_logger.debug(f"📤 Text chunk {chunk_counter}: '{text_chunk['text']}' ({int(chunk_time*1000)}ms)")
                                 chunk_counter += 1
 
-                        # Calculate total latency
+                        # Calculate total latency and profiling metrics
                         total_latency_ms = int((time.time() - processing_start_time) * 1000)
-                        streaming_logger.info(f"✅ CHUNKED STREAMING complete for {chunk_id}: {chunk_counter} chunks in {total_latency_ms}ms")
+                        avg_chunk_time = int(np.mean(chunk_times) * 1000) if chunk_times else 0
+                        streaming_logger.info(f"✅ CHUNKED STREAMING complete for {chunk_id}: {chunk_counter} chunks in {total_latency_ms}ms (avg chunk: {avg_chunk_time}ms, first: {int(first_chunk_time*1000) if first_chunk_time else 0}ms)")
 
                         # CRITICAL FIX: Send conversation_complete message to reset VAD state
                         # This allows the frontend to call resetForNextInput() and enable continuous streaming
