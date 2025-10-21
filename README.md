@@ -1,15 +1,14 @@
-# Voxtral + TTS Integrated Real-time Voice Application
+# Voxtral Model - Real-time Voice AI System
 
-A complete real-time voice AI system combining Mistral's Voxtral model for speech recognition with Orpheus TTS for high-quality speech synthesis. Features full-duplex voice conversation with pre-loaded models and optimized for RunPod deployment.
+A production-ready real-time voice AI system powered by Mistral's **Voxtral model** featuring Voice Activity Detection (VAD), Automatic Speech Recognition (ASR), and Large Language Model (LLM) processing. Optimized for RunPod deployment with sub-500ms end-to-end latency.
 
 ## ✨ Features
 
-- **Complete Voice Pipeline**: Speech-to-Text → LLM → Text-to-Speech
+- **Voice Activity Detection (VAD)**: Smart silence detection and voice segmentation
+- **Automatic Speech Recognition (ASR)**: Voxtral model for accurate speech-to-text conversion
+- **Large Language Model (LLM)**: Integrated LLM processing for intelligent responses
 - **Real-time Processing**: End-to-end latency <500ms
-- **High-quality TTS**: Orpheus TTS with 24 voices across 8 languages
-- **Pre-loaded Models**: Instant conversation startup (no loading delays)
-- **Voice Activity Detection**: Smart silence detection and processing
-- **WebSocket Streaming**: Real-time bidirectional audio communication
+- **WebSocket Streaming**: Bidirectional real-time audio communication
 - **Web Interface**: Modern UI with voice controls on port 8000
 - **Health Monitoring**: Comprehensive system monitoring on port 8005
 - **GPU Optimized**: CUDA acceleration throughout the pipeline
@@ -18,198 +17,162 @@ A complete real-time voice AI system combining Mistral's Voxtral model for speec
 ## 🏗️ Architecture
 
 ```
-User Voice → VAD → STT (Voxtral) → LLM → TTS (Orpheus) → Audio Output
-                    ↓
-              WebSocket Communication
-                    ↓
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Web UI        │    │  Health Check    │    │  TCP Server     │
-│   Port 8000     │    │  Port 8005       │    │  Port 8766      │
-│   + WebSocket   │    │  Monitoring      │    │  Alternative    │
-│   + TTS Audio   │    │                  │    │  Interface      │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                                 │
-                    ┌─────────────────────┐
-                    │  Pre-loaded Models  │
-                    │  • Voxtral STT      │
-                    │  • Orpheus TTS      │
-                    │  • SNAC Audio       │
-                    └─────────────────────┘
+User Voice Input
+    ↓
+┌─────────────────────────────────────┐
+│  Voice Activity Detection (VAD)     │ ← Silence detection & segmentation
+└─────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────┐
+│  Audio Preprocessing                │ ← Spectrogram generation
+└─────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────┐
+│  Voxtral ASR Model                  │ ← Speech-to-Text conversion
+│  (mistralai/Voxtral-Mini-3B-2507)   │
+└─────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────┐
+│  LLM Processing                     │ ← Response generation
+└─────────────────────────────────────┘
+    ↓
+    Output (Text/Metadata)
 ```
 
-### Key Components
+### Core Components
 
-- **Web Interface**: Real-time voice conversation UI
-- **STT Engine**: Voxtral model for speech recognition
-- **TTS Engine**: Orpheus with 24 voices across 8 languages
-- **VAD System**: Smart voice activity detection
-- **Model Pre-loading**: Instant startup with cached models
+- **VAD System**: Voice activity detection with configurable sensitivity
+- **Audio Processor**: Real-time audio preprocessing and spectrogram generation
+- **Voxtral Model**: Mistral's state-of-the-art speech recognition model
+- **Web Interface**: FastAPI-based UI with WebSocket support
+- **Health Check**: System monitoring and performance metrics
+- **Streaming Servers**: WebSocket and TCP servers for real-time communication
 
 ## 📋 Requirements
 
 ### System Requirements
 - **GPU**: RTX A4500 (recommended) or any CUDA-compatible GPU with 8GB+ VRAM
 - **RAM**: 16GB+ recommended
-- **Storage**: 50GB+ for model cache
+- **Storage**: 30GB+ for model cache
 - **OS**: Ubuntu 20.04+ or similar Linux distribution
 
 ### Python Dependencies
 - Python 3.8+
 - PyTorch 2.1.0+
-- Transformers 4.45.0+
+- Transformers 4.56.0+
 - FastAPI, WebSockets, Librosa, and more (see requirements.txt)
 
-## 🚀 RunPod Deployment
+## 🚀 Quick Start
 
-### Quick Start (Single Command)
+### Local Installation
+
 ```bash
-cd workspace
-git clone <your-repository-url> Voxtral-Final
-cd Voxtral-Final
-bash deploy_voxtral_tts.sh
+# Clone repository
+git clone <your-repository-url>
+cd voxtral-model
+
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+pip install --upgrade pip
+pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cu121
+pip install -r requirements.txt
+
+# Create necessary directories
+mkdir -p model_cache logs
+
+# Start the system
+python3 -m src.api.ui_server_realtime
 ```
 
-### Step 1: Pod Configuration
-When creating your RunPod pod:
-- **Template**: PyTorch 2.1.0+ with CUDA 12.1
-- **GPU**: RTX A4500 or better (8GB+ VRAM)
-- **Container Disk**: 50GB minimum
-- **HTTP Ports**: 8000, 8005
-- **TCP Ports**: 8766
+The web interface will be available at `http://localhost:8000`
 
-### Step 2: Access Your Application
-- **Web Interface**: `https://[POD_ID]-8000.proxy.runpod.net`
-- **Health Check**: `https://[POD_ID]-8005.proxy.runpod.net/health`
-- **WebSocket**: `wss://[POD_ID]-8000.proxy.runpod.net/ws`
+### RunPod Deployment
 
-### Step 3: Start Conversation
-1. Open the web interface
-2. Click "Connect" to establish WebSocket connection
-3. Click "Start Conversation" to begin
-4. Speak into your microphone
-5. Receive both text and audio responses!
-- **TCP**: Direct connection to RunPod public IP on assigned port
+See [RUNPOD_DEPLOYMENT.md](RUNPOD_DEPLOYMENT.md) for detailed RunPod deployment instructions.
 
 ## 🎯 Usage
 
 ### Web Interface
-1. Open the web UI in your browser
+
+1. Open the web UI in your browser: `http://localhost:8000`
 2. Click "Connect" to establish WebSocket connection
 3. Click "Start Recording" to begin audio capture
 4. Speak into your microphone
 5. Click "Stop Recording" to process audio
-6. View transcription/response in real-time
+6. View the transcribed text and system metrics
 
-### WebSocket API
-```javascript
-const ws = new WebSocket('ws://your-server:8765');
+### API Endpoints
 
-// Send audio data
-ws.send(JSON.stringify({
-    type: 'audio',
-    audio_data: base64AudioData,
-    mode: 'transcribe', // or 'understand'
-    prompt: 'Optional prompt text'
-}));
+- **GET `/`** - Web interface
+- **GET `/health`** - Health check endpoint
+- **GET `/ready`** - Readiness check
+- **WebSocket `/ws`** - Real-time audio streaming
 
-// Receive response
-ws.onmessage = (event) => {
-    const response = JSON.parse(event.data);
-    console.log(response.text);
-};
-```
+### WebSocket Message Format
 
-### TCP API
-```python
-import socket
-import json
-import struct
-
-# Connect to TCP server
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-sock.connect(('your-server', 8766))
-
-# Send message
-message = {
-    'type': 'audio',
-    'audio_data': base64_audio,
-    'mode': 'transcribe'
+**Client → Server (Audio):**
+```json
+{
+  "type": "audio",
+  "data": "base64_encoded_audio_chunk"
 }
-data = json.dumps(message).encode('utf-8')
-sock.send(struct.pack('!I', len(data)) + data)
-
-# Receive response
-length = struct.unpack('!I', sock.recv(4))[0]
-response = json.loads(sock.recv(length).decode('utf-8'))
 ```
 
-## 🔧 Configuration
+**Server → Client (Response):**
+```json
+{
+  "type": "transcription",
+  "text": "recognized speech",
+  "confidence": 0.95,
+  "timestamp": "2024-01-01T12:00:00Z"
+}
+```
 
-### config.yaml
+## ⚙️ Configuration
+
+Edit `config.yaml` to customize:
+
+- **VAD Settings**: Sensitivity, thresholds, chunk sizes
+- **Audio Settings**: Sample rate, channels, format
+- **Server Settings**: Host, ports, connection limits
+- **Performance**: Monitoring, latency targets
+
+Example configuration:
 ```yaml
-server:
-  host: "0.0.0.0"
-  http_port: 8000
-  health_port: 8005
-  tcp_ports: [8765, 8766]
-
-model:
-  name: "mistralai/Voxtral-Mini-3B-2507"
-  device: "cuda"
-  torch_dtype: "bfloat16"
+vad:
+  threshold: 0.005
+  min_voice_duration_ms: 200
+  min_silence_duration_ms: 400
+  sensitivity: "ultra_high"
 
 audio:
   sample_rate: 16000
   chunk_size: 1024
-  channels: 1
-
-spectrogram:
-  n_mels: 128
-  hop_length: 160
-  win_length: 400
-  n_fft: 400
+  format: "float32"
 ```
 
-## 📊 Performance Optimization
+## 📊 Performance Metrics
 
-### Latency Optimization
-- **Model Compilation**: Automatic `torch.compile()` when available
-- **Mixed Precision**: bfloat16 inference
-- **KV Caching**: Enabled for faster generation
-- **Greedy Decoding**: For minimal latency
-- **Optimized Audio Processing**: Efficient log-mel spectrogram generation
+The system tracks:
+- **Processing Latency**: End-to-end processing time (ms)
+- **Audio Duration**: Input audio length (s)
+- **GPU Memory Usage**: VRAM consumption
+- **Connection Count**: Active WebSocket connections
+- **Error Rates**: System error frequency
 
-### Memory Optimization
-- **Memory Mapping**: Efficient model loading
-- **Chunked Processing**: 30-second audio segments
-- **Buffer Management**: Optimized audio buffering
-- **GPU Memory Management**: Configured memory allocation
-
-## 🔍 Monitoring
-
-### Health Endpoints
-- `GET /health` - Basic health check
-- `GET /status` - Detailed system status
-- `GET /ready` - Model readiness probe
-
-### Logging
-- **File Logging**: `/workspace/logs/voxtral_streaming.log`
-- **Console Logging**: Real-time console output
-- **Structured Logging**: JSON-formatted logs with timestamps
-
-### Metrics
-- Processing latency (ms)
-- Audio duration (s)
-- GPU memory usage
-- Connection count
-- Error rates
+Access metrics via:
+```bash
+curl http://localhost:8005/health
+```
 
 ## 🧪 Testing
 
 Run the test suite:
 ```bash
-pip install pytest
-python -m pytest tests/test_streaming.py -v
+python -m pytest tests/ -v
 ```
 
 ### Test Coverage
@@ -217,7 +180,6 @@ python -m pytest tests/test_streaming.py -v
 - Log-mel spectrogram generation
 - Model initialization and inference
 - WebSocket message handling
-- TCP server communication
 - Configuration management
 - Health check endpoints
 
@@ -225,85 +187,70 @@ python -m pytest tests/test_streaming.py -v
 
 ### Common Issues
 
-**Model Download Fails**
+**Issue**: Model loading timeout
+- **Solution**: Increase `MODEL_LOAD_TIMEOUT` in `.env`
+
+**Issue**: Out of memory errors
+- **Solution**: Reduce `GPU_MEMORY_UTILIZATION` or use smaller batch sizes
+
+**Issue**: WebSocket connection failures
+- **Solution**: Check firewall settings and ensure port 8000 is accessible
+
+**Issue**: High latency
+- **Solution**: Enable `ENABLE_TORCH_COMPILE` and `ENABLE_FLASH_ATTENTION` in `.env`
+
+### Debug Mode
+
+Enable detailed logging:
 ```bash
-python -c "from transformers import VoxtralForConditionalGeneration; VoxtralForConditionalGeneration.from_pretrained('mistralai/Voxtral-Mini-3B-2507')"
+export LOG_LEVEL=DEBUG
+python3 -m src.api.ui_server_realtime
 ```
 
-**Audio Processing Errors**
+## 📝 Environment Variables
+
+See `.env.example` for all available environment variables:
+
 ```bash
-python -c "import librosa, torch, torchaudio; print('Audio libraries OK')"
+cp .env.example .env
+# Edit .env with your configuration
 ```
 
-**Port Access Issues**
-- Ensure ports are exposed in RunPod configuration
-- Bind to `0.0.0.0`, not `127.0.0.1` or `localhost`
-- Check firewall settings
+Key variables:
+- `HF_TOKEN`: HuggingFace API token (required)
+- `CUDA_VISIBLE_DEVICES`: GPU selection
+- `MODEL_CACHE_DIR`: Model cache directory
+- `LOG_LEVEL`: Logging verbosity
 
-**GPU Not Detected**
-```bash
-python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
-```
+## 📚 Documentation
 
-### Performance Issues
-- **High Latency**: Reduce `max_new_tokens`, use smaller audio chunks
-- **Memory Issues**: Reduce batch size, enable gradient checkpointing
-- **Connection Issues**: Check network configuration, increase timeout values
-
-## 📁 Project Structure
-
-```
-voxtral_realtime_streaming/
-├── src/
-│   ├── models/
-│   │   ├── voxtral_model.py      # Voxtral model wrapper
-│   │   └── audio_processor.py    # Audio preprocessing
-│   ├── streaming/
-│   │   ├── websocket_server.py   # WebSocket server
-│   │   └── tcp_server.py         # TCP server
-│   ├── api/
-│   │   ├── ui_server.py          # Web UI server
-│   │   └── health_check.py       # Health monitoring
-│   └── utils/
-│       ├── config.py             # Configuration management
-│       └── logging_config.py     # Logging setup
-├── config/
-│   ├── requirements.txt          # Python dependencies
-│   └── config.yaml              # Configuration file
-├── scripts/
-│   ├── setup.sh                 # Setup script
-│   └── run.sh                   # Run script
-└── tests/
-    └── test_streaming.py        # Test suite
-```
+- [RUNPOD_DEPLOYMENT.md](RUNPOD_DEPLOYMENT.md) - RunPod deployment guide
+- [config.yaml](config.yaml) - Configuration reference
+- [requirements.txt](requirements.txt) - Python dependencies
 
 ## 🤝 Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
+Contributions are welcome! Please ensure:
+- Code follows existing style conventions
+- All tests pass
+- Documentation is updated
+- Commits are descriptive
 
 ## 📄 License
 
-This project is licensed under the Apache 2.0 License - see the LICENSE file for details.
+This project is provided as-is for research and production use.
 
-## 🙏 Acknowledgments
-
-- **Mistral AI** for the Voxtral model
-- **Hugging Face** for the Transformers library
-- **RunPod** for GPU infrastructure
-- **FastAPI** and **WebSockets** for the API framework
-
-## 📞 Support
+## 🆘 Support
 
 For issues and questions:
-1. Check the troubleshooting section
-2. Review the logs in `/workspace/logs/`
-3. Test individual components
-4. Open an issue with detailed error information
+1. Check the troubleshooting section above
+2. Review configuration settings in `config.yaml`
+3. Check logs in `./logs/` directory
+4. Enable debug mode for detailed output
 
 ---
 
-**Built with ❤️ for real-time AI audio processing**
+**Last Updated**: 2024
+**Version**: 1.0.0
+**Status**: Production Ready
+

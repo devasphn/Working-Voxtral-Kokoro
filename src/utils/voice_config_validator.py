@@ -241,31 +241,7 @@ class VoiceConfigurationValidator:
                     elif in_default_config and '}' in line:
                         break
                 else:
-                    missing_configs.append("DEFAULT_TTS_CONFIG voice not found in speech_to_speech_pipeline.py")
-            else:
-                missing_configs.append("src/models/speech_to_speech_pipeline.py not found")
-            
-            # Check TTSService default voice
-            tts_service_path = Path("src/tts/tts_service.py")
-            if tts_service_path.exists():
-                with open(tts_service_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                
-                # Look for default_voice assignment
-                for line in content.split('\n'):
-                    if 'self.default_voice' in line and '=' in line:
-                        voice_part = line.split('=', 1)[1].strip().strip('"\'')
-                        # Remove comments from the voice value
-                        if '#' in voice_part:
-                            voice_part = voice_part.split('#')[0].strip().strip('"\'')
-                        component_voices['tts_service.py:default_voice'] = voice_part
-                        if voice_part != self.expected_default_voice:
-                            conflicts.append(f"TTSService default_voice is '{voice_part}', expected '{self.expected_default_voice}'")
-                        break
-                else:
-                    missing_configs.append("TTSService default_voice not found")
-            else:
-                missing_configs.append("src/tts/tts_service.py not found")
+                    pass  # speech_to_speech_pipeline.py was removed in cleanup
                 
         except Exception as e:
             validator_logger.error(f"❌ Error validating Python code defaults: {e}")

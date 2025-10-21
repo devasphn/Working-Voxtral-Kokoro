@@ -40,7 +40,6 @@ streaming_logger.setLevel(logging.DEBUG)
 _unified_manager = None
 _audio_processor = None
 _performance_monitor = None
-_speech_to_speech_pipeline = None
 
 # Response deduplication tracking
 recent_responses = {}  # client_id -> last_response_text
@@ -71,14 +70,6 @@ def get_performance_monitor():
         _performance_monitor = performance_monitor
         streaming_logger.info("Performance monitor loaded")
     return _performance_monitor
-def get_speech_to_speech_pipeline():
-    """Lazy initialization of Speech-to-Speech pipeline"""
-    global _speech_to_speech_pipeline
-    if _speech_to_speech_pipeline is None:
-        from src.models.speech_to_speech_pipeline import speech_to_speech_pipeline
-        _speech_to_speech_pipeline = speech_to_speech_pipeline
-        streaming_logger.info("Speech-to-Speech pipeline lazy-loaded")
-    return _speech_to_speech_pipeline
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -401,11 +392,7 @@ async def home(request: Request):
                 <div style="margin: 10px 0;">
                     <label style="margin-right: 20px;">
                         <input type="radio" name="mode" value="transcribe" checked onchange="updateMode()">
-                        📝 Text Only
-                    </label>
-                    <label>
-                        <input type="radio" name="mode" value="speech_to_speech" onchange="updateMode()">
-                        🗣️ Speech-to-Speech
+                        📝 Transcribe
                     </label>
                 </div>
                 <p style="margin: 5px 0; opacity: 0.8; font-size: 0.9em;" id="modeDescription">AI assistant ready for text-based conversation</p>
@@ -747,15 +734,9 @@ async def home(request: Request):
             currentMode = mode;
 
             const description = document.getElementById('modeDescription');
-            const speechControls = document.getElementById('speechToSpeechControls');
-            const speechBtn = document.getElementById('speechToSpeechBtn');
 
-            if (mode === 'speech_to_speech') {
-                description.textContent = 'AI assistant ready for speech-to-speech conversation with voice responses';
-                speechControls.style.display = 'flex';
-                speechBtn.style.display = 'inline-block';
-            } else {
-                description.textContent = 'AI assistant ready for text-based conversation';
+            if (mode === 'transcribe') {
+                description.textContent = 'AI assistant ready for transcription';
                 speechControls.style.display = 'none';
                 speechBtn.style.display = 'none';
             }
@@ -778,24 +759,7 @@ async def home(request: Request):
             }
         }
 
-        function startSpeechToSpeech() {
-            if (currentMode === 'speech_to_speech') {
-                speechToSpeechActive = true;
-                currentConversationId = 'speech_' + Date.now();
 
-                // Show speech-to-speech conversation area
-                document.getElementById('conversation').style.display = 'none';
-                document.getElementById('speechToSpeechConversation').style.display = 'block';
-
-                // Update button states
-                document.getElementById('speechToSpeechBtn').disabled = true;
-                document.getElementById('streamBtn').disabled = true;
-                document.getElementById('stopBtn').disabled = false;
-
-                startConversation();
-                log('Speech-to-Speech mode activated');
-            }
-        }
 
         function showProcessingStatus(stage, message) {
             const statusDiv = document.getElementById('processingStatus');
@@ -1710,18 +1674,11 @@ async def home(request: Request):
                 const message = {
                     type: 'audio_chunk',
                     audio_data: base64Audio,
-                    mode: speechToSpeechActive ? 'speech_to_speech' : 'conversation',
-                    prompt: '',  // No custom prompts - using hardcoded optimal prompt
+                    mode: 'transcribe',
+                    prompt: '',
                     chunk_id: chunkCounter++,
                     timestamp: Date.now()
                 };
-
-                // Add speech-to-speech specific parameters
-                if (speechToSpeechActive) {
-                    message.conversation_id = currentConversationId;
-                    message.voice = selectedVoice === 'auto' ? null : selectedVoice;  // null for auto-selection
-                    message.speed = selectedSpeed;
-                }
                 
                 ws.send(JSON.stringify(message));
                 log(`Sent audio chunk ${chunkCounter} (${audioData.length} samples)`);
@@ -1787,21 +1744,11 @@ async def api_status():
         # Determine overall health status
         is_healthy = (
             unified_manager.is_initialized and
-            model_info['unified_manager']['voxtral_initialized'] and
-            model_info['unified_manager']['kokoro_initialized']
+            model_info['unified_manager']['voxtral_initialized']
         )
-        
+
         voxtral_model = get_voxtral_model()
         model_info = voxtral_model.get_model_info()
-
-        # Get speech-to-speech pipeline info if enabled
-        speech_to_speech_info = None
-        if config.speech_to_speech.enabled:
-            try:
-                pipeline = get_speech_to_speech_pipeline()
-                speech_to_speech_info = pipeline.get_pipeline_info()
-            except Exception as e:
-                speech_to_speech_info = {"error": str(e), "enabled": False}
 
         return JSONResponse({
             "status": "healthy" if is_healthy else "initializing",
@@ -1809,7 +1756,6 @@ async def api_status():
             "unified_system": {
                 "initialized": unified_manager.is_initialized,
                 "voxtral_ready": model_info['unified_manager']['voxtral_initialized'],
-                "kokoro_ready": model_info['unified_manager']['kokoro_initialized'],
                 "memory_manager_ready": model_info['unified_manager']['memory_manager_initialized']
             },
             "memory_stats": memory_stats.get("memory_stats", {}),
@@ -1819,16 +1765,12 @@ async def api_status():
                 "operations_within_target": performance_summary["statistics"]["operations_within_target"]
             },
             "model": model_info,
-            "speech_to_speech": speech_to_speech_info,
             "config": {
                 "sample_rate": config.audio.sample_rate,
                 "tcp_ports": config.server.tcp_ports,
                 "latency_target": config.streaming.latency_target_ms,
-                "mode": "conversational_optimized_with_kokoro_tts",
-                "integration_type": "kokoro_tts",
-                "speech_to_speech_enabled": config.speech_to_speech.enabled,
-                "speech_to_speech_latency_target": config.speech_to_speech.latency_target_ms,
-                "mode": "conversational_optimized_with_vad_and_speech_to_speech" if config.speech_to_speech.enabled else "conversational_optimized_with_vad"
+                "mode": "voxtral_vad_asr_llm",
+                "integration_type": "voxtral_only"
             }
         })
     except Exception as e:
@@ -1836,7 +1778,7 @@ async def api_status():
             "status": "error",
             "timestamp": time.time(),
             "error": str(e),
-            "integration_type": "kokoro_tts"
+            "integration_type": "voxtral_only"
         }, status_code=500)
 
 # WebSocket endpoint for CHUNKED STREAMING
@@ -1894,32 +1836,6 @@ async def websocket_endpoint(websocket: WebSocket):
                                     "processing_time_ms": text_chunk.get('processing_time_ms', 0)
                                 })
                                 streaming_logger.debug(f"📤 Text chunk {chunk_counter}: '{text_chunk['text']}'")
-                                
-                                # Generate TTS for this chunk immediately
-                                try:
-                                    tts_result = await unified_manager.kokoro_model.synthesize_speech_chunk(
-                                        text=text_chunk['text'],
-                                        chunk_id=f"tts_{chunk_id}_{chunk_counter}"
-                                    )
-                                    
-                                    if tts_result['success'] and len(tts_result['audio_data']) > 0:
-                                        # Send audio chunk immediately
-                                        audio_bytes = tts_result['audio_data'].astype(np.float32).tobytes()
-                                        audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
-                                        
-                                        await websocket.send_json({
-                                            "type": "audio_chunk_stream",
-                                            "chunk_id": f"{chunk_id}_{chunk_counter}",
-                                            "audio_data": audio_b64,
-                                            "sample_rate": tts_result['sample_rate'],
-                                            "synthesis_time_ms": tts_result.get('synthesis_time_ms', 0),
-                                            "is_final": text_chunk.get('is_final', False)
-                                        })
-                                        streaming_logger.debug(f"🎵 Audio chunk {chunk_counter} sent instantly")
-                                        
-                                except Exception as tts_error:
-                                    streaming_logger.error(f"❌ TTS error for chunk {chunk_counter}: {tts_error}")
-                                
                                 chunk_counter += 1
                         
                         streaming_logger.info(f"✅ CHUNKED STREAMING complete for {chunk_id}: {chunk_counter} chunks")
@@ -1977,10 +1893,9 @@ async def initialize_models_at_startup():
                 # Log final performance status
                 model_info = unified_manager.get_model_info()
                 optimization_status = unified_manager.get_optimization_status()
-                
+
                 streaming_logger.info(f"📊 Final Status:")
                 streaming_logger.info(f"   Voxtral: {model_info['unified_manager']['voxtral_initialized']}")
-                streaming_logger.info(f"   Kokoro: {model_info['unified_manager']['kokoro_initialized']}")
                 streaming_logger.info(f"   FlashAttention2: {optimization_status['optimizations_enabled'].get('flash_attention_available', False)}")
                 streaming_logger.info(f"   TF32 Enabled: {optimization_status['optimizations_enabled'].get('allow_tf32', False)}")
                 

@@ -25,17 +25,19 @@ from threading import Lock
 import threading
 import base64
 
-# Import mistral_common with fallback
+# Import mistral_common with fallback (v1.8.5+ with AudioURLChunk & TranscriptionRequest)
 try:
-    from mistral_common.audio import Audio
-    from mistral_common.protocol.instruct.messages import AudioChunk, TextChunk, UserMessage
+    from mistral_common.audio import Audio, AudioURLChunk
+    from mistral_common.protocol.instruct.messages import AudioChunk, TextChunk, UserMessage, TranscriptionRequest
     MISTRAL_COMMON_AVAILABLE = True
 except ImportError:
     # Fallback implementations
     Audio = None
+    AudioURLChunk = None
     AudioChunk = None
     TextChunk = None
     UserMessage = None
+    TranscriptionRequest = None
     MISTRAL_COMMON_AVAILABLE = False
 import tempfile
 import soundfile as sf
@@ -223,14 +225,24 @@ class VoxtralModel:
         try:
             realtime_logger.info("🚀 Starting ULTRA-LOW LATENCY Voxtral initialization...")
             start_time = time.time()
-            
+
+            # PHASE 3 OPTIMIZATION: Enable Flash Attention 2 backend
+            if torch.cuda.is_available():
+                try:
+                    torch.backends.cuda.enable_flash_sdp(True)
+                    torch.backends.cuda.enable_mem_efficient_sdp(False)
+                    torch.backends.cuda.enable_math_sdp(False)
+                    realtime_logger.info("✅ Flash Attention 2 backend enabled for optimal performance")
+                except Exception as e:
+                    realtime_logger.warning(f"⚠️ Flash Attention 2 backend setup failed: {e}")
+
             # Load processor (keep existing)
             realtime_logger.info(f"📥 Loading AutoProcessor from {config.model.name}")
             self.processor = AutoProcessor.from_pretrained(
                 config.model.name,
                 cache_dir=config.model.cache_dir
             )
-            
+
             # CRITICAL: Check FlashAttention2
             attn_implementation = self._check_flash_attention_availability()
             
@@ -275,7 +287,22 @@ class VoxtralModel:
             
             # ULTRA-OPTIMIZED model preparation
             self.model.eval()
-            
+
+            # PHASE 3 OPTIMIZATION: Enable torch.compile for faster inference
+            if hasattr(torch, 'compile') and torch.__version__ >= "2.0":
+                try:
+                    self.model = torch.compile(
+                        self.model,
+                        mode="reduce-overhead",  # Best for latency reduction
+                        fullgraph=False,
+                        dynamic=True
+                    )
+                    realtime_logger.info("✅ torch.compile enabled for faster inference (PyTorch 2.0+)")
+                    self.use_torch_compile = True
+                except Exception as e:
+                    realtime_logger.warning(f"⚠️ torch.compile failed: {e}")
+                    self.use_torch_compile = False
+
             # CRITICAL: Enable aggressive PyTorch optimizations
             if torch.cuda.is_available():
                 # Enable Tensor Core optimizations
@@ -451,7 +478,27 @@ class VoxtralModel:
             mode="conversation"
         )
         return result['response']
-    
+
+    async def transcribe_from_url(self, audio_url: str) -> str:
+        """Transcribe audio from URL, file path, or base64 string (v1.8.5+)"""
+        try:
+            if not MISTRAL_COMMON_AVAILABLE or AudioURLChunk is None:
+                raise ImportError("mistral-common[audio] v1.8.5+ required for AudioURLChunk support")
+
+            # Create AudioURLChunk from URL/path/base64
+            audio_chunk = AudioURLChunk(url=audio_url)
+
+            # Create user message with audio
+            message = UserMessage(content=[audio_chunk])
+
+            # Process transcription
+            response = await self.process_audio_stream(message)
+            return response
+
+        except Exception as e:
+            realtime_logger.error(f"Error transcribing from URL: {e}")
+            raise
+
     async def process_realtime_chunk_streaming(self, audio_data: Union[torch.Tensor, np.ndarray], chunk_id: str, mode: str = "conversation") -> AsyncGenerator[Dict[str, Any], None]:
         """Process real-time audio with CHUNKED STREAMING response"""
         if not self.is_initialized:

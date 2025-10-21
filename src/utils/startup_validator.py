@@ -122,14 +122,11 @@ class StartupValidator:
             required_files = [
                 "config.yaml",
                 "src/utils/config.py",
-                "src/models/kokoro_model_realtime.py",
                 "src/api/ui_server_realtime.py"
             ]
-            
+
             optional_files = [
-                ".env.example",
-                "src/models/speech_to_speech_pipeline.py",
-                "src/tts/tts_service.py"
+                ".env.example"
             ]
             
             missing_required = []

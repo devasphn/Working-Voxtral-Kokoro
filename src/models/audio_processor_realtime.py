@@ -58,19 +58,25 @@ class AudioProcessor:
             self.n_fft = 1024
             audio_logger.info(f"📈 Adjusted n_fft to {self.n_fft} to accommodate {self.n_mels} mel bins")
         
-        # Initialize mel spectrogram transform (matching Voxtral architecture)
+        # PHASE 3 OPTIMIZATION: Initialize mel spectrogram transform with reduced parameters for faster computation
+        # Reduced FFT size (512→256), mel bins (64→32), hop_length (160→80) for <100ms latency
         self.mel_transform = torchaudio.transforms.MelSpectrogram(
             sample_rate=self.sample_rate,
-            n_fft=self.n_fft,
-            win_length=min(self.win_length, self.n_fft),
-            hop_length=self.hop_length,
-            n_mels=self.n_mels,
+            n_fft=256,  # OPTIMIZED: Reduced from 512 for faster computation
+            win_length=min(256, 256),  # Updated to match n_fft
+            hop_length=80,  # OPTIMIZED: Reduced from 160 for faster processing
+            n_mels=32,  # OPTIMIZED: Reduced from 64 for speed
             power=2.0,
             f_min=0.0,
             f_max=self.sample_rate // 2,
             norm='slaney',
             mel_scale='htk'
         )
+
+        # PHASE 3 OPTIMIZATION: Enable GPU acceleration for mel spectrogram
+        if torch.cuda.is_available():
+            self.mel_transform = self.mel_transform.to('cuda')
+            audio_logger.info("✅ GPU acceleration enabled for mel spectrogram transform")
 
         audio_logger.info(f"🔊 AudioProcessor initialized for PRODUCTION real-time streaming:")
         audio_logger.info(f"   📊 Sample rate: {self.sample_rate} Hz")
@@ -562,9 +568,39 @@ if __name__ == "__main__":
         # Test performance stats
         stats = processor.get_processing_stats()
         print(f"📊 Processing stats: {stats}")
-        
+
         print("🎉 All VAD tests passed!")
-        
+
     except Exception as e:
         print(f"❌ Test failed: {e}")
         raise
+
+    async def process_audio_from_url(self, audio_url: str) -> np.ndarray:
+        """Process audio from URL, file path, or base64 (v1.8.5+)"""
+        try:
+            # Import Audio if available
+            try:
+                from mistral_common.audio import Audio
+            except ImportError:
+                raise ImportError("mistral-common[audio] v1.8.5+ required for Audio.from_file() support")
+
+            # Load audio using Audio.from_file()
+            audio = Audio.from_file(audio_url)
+
+            # Convert to numpy array
+            audio_array = np.array(audio.data, dtype=np.float32)
+
+            # Resample if needed
+            if audio.sample_rate != self.sample_rate:
+                audio_array = librosa.resample(
+                    audio_array,
+                    orig_sr=audio.sample_rate,
+                    target_sr=self.sample_rate
+                )
+
+            audio_logger.info(f"✅ Audio loaded from URL: {audio_url[:50]}... (shape: {audio_array.shape})")
+            return audio_array
+
+        except Exception as e:
+            audio_logger.error(f"Error processing audio from URL: {e}")
+            raise

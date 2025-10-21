@@ -113,10 +113,6 @@ class FallbackConfig:
                 'model_name': 'mistralai/Voxtral-Mini-3B-2507',
                 'max_context_length': 130072,
                 'torch_dtype': 'bfloat16'
-            })(),
-            'kokoro': type('obj', (object,), {
-                'model_name': 'hexgrad/Kokoro-82M',
-                'default_voice': 'hf_alpha'
             })()
         })()
         
@@ -162,7 +158,6 @@ def initialize_compatibility():
     packages_to_check = [
         ("transformers", "transformers"),
         ("mistral-common", "mistral_common"),
-        ("kokoro", "kokoro"),
         ("pydantic-settings", "pydantic_settings"),
         ("torch", "torch"),
         ("fastapi", "fastapi"),

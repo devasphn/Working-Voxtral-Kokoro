@@ -111,26 +111,7 @@ class GPUMemoryConfig(BaseModel):
     cleanup_frequency: str = "after_each_generation"  # "after_each_generation", "periodic"
     enable_monitoring: bool = True
 
-class TTSConfig(BaseModel):
-    engine: str = "kokoro"  # Changed to Kokoro TTS only
-    default_voice: str = "hf_alpha"  # Kokoro Hindi voice (Heart - Calm & Friendly)
-    sample_rate: int = 24000
-    enabled: bool = True
-    # Kokoro TTS settings
-    voice: str = "hf_alpha"  # Kokoro Hindi voice (Heart - Calm & Friendly)
-    speed: float = 1.0  # Kokoro speech speed
-    lang_code: str = "h"  # Kokoro language code (h=Hindi, a=American English, b=British English)
-    voices: TTSVoicesConfig = TTSVoicesConfig()
-    performance: TTSPerformanceConfig = TTSPerformanceConfig()
-    gpu_memory: GPUMemoryConfig = GPUMemoryConfig()
 
-class SpeechToSpeechConfig(BaseModel):
-    enabled: bool = True
-    latency_target_ms: int = 300  # Updated to match <300ms requirement
-    buffer_size: int = 8192
-    output_format: str = "wav"
-    quality: str = "high"
-    emotional_expression: bool = True
 
 class Config(BaseSettings):
     """Main configuration class using BaseSettings for environment variable support"""
@@ -141,9 +122,7 @@ class Config(BaseSettings):
     vad: VADConfig = VADConfig()
     streaming: StreamingConfig = StreamingConfig()
     logging: LoggingConfig = LoggingConfig()
-    tts: TTSConfig = TTSConfig()
     performance: PerformanceConfig = PerformanceConfig()
-    speech_to_speech: SpeechToSpeechConfig = SpeechToSpeechConfig()
     
     # Pydantic v2 settings configuration with fallback
     if PYDANTIC_SETTINGS_AVAILABLE and SettingsConfigDict is not None:

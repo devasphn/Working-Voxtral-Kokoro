@@ -1,51 +1,53 @@
-# ULTRA-LOW LATENCY Configuration for <500ms end-to-end
+# Voxtral Model Configuration - VAD + ASR + LLM
+# Optimized for real-time speech processing
+
 server:
   host: "0.0.0.0"
   http_port: 8000
   health_port: 8005
-  tcp_ports: [] # DISABLED: Remove unused ports
+  tcp_ports: []
 
 model:
   name: "mistralai/Voxtral-Mini-3B-2507"
   cache_dir: "./model_cache"
   device: "cuda"
-  torch_dtype: "bfloat16" # FIXED: Changed from float16 to bfloat16 for better stability
-  max_memory_per_gpu: "8GB" # INCREASED: Allow more memory for speed
-  # ULTRA-FAST settings
+  torch_dtype: "bfloat16"
+  max_memory_per_gpu: "16GB"   # OPTIMIZED: Increased from 8GB for better performance
   ultra_fast_mode: true
   warmup_enabled: true
+  use_cache: true              # PHASE 3 OPTIMIZATION: Enable KV cache for faster generation
 
 audio:
   sample_rate: 16000
   chunk_size: 1024
-  format: "float32"      # CRITICAL: Audio data must be float32
+  format: "float32"
   channels: 1
   frame_duration_ms: 20
 
-# ULTRA-AGGRESSIVE VAD for <500ms
+# Voice Activity Detection (VAD) - PHASE 3 OPTIMIZED for <100ms latency
 vad:
-  threshold: 0.005 # ULTRA-SENSITIVE: 2x more sensitive
-  min_voice_duration_ms: 200 # ULTRA-FAST: 2.5x faster detection
-  min_silence_duration_ms: 400 # ULTRA-FAST: 2x faster completion
-  chunk_size_ms: 20 # ULTRA-SMALL: Minimal chunks
-  overlap_ms: 2 # ULTRA-MINIMAL: Tiny overlap
-  sensitivity: "ultra_high" # Maximum sensitivity
+  threshold: 0.01              # OPTIMIZED: Increased from 0.005 for faster detection
+  min_voice_duration_ms: 100   # OPTIMIZED: Reduced from 200 for faster response
+  min_silence_duration_ms: 200 # OPTIMIZED: Reduced from 400 for faster cutoff
+  chunk_size_ms: 20
+  overlap_ms: 2
+  sensitivity: "high"          # Keep high for accuracy
 
 spectrogram:
-  n_mels: 64 # REDUCED: 2x smaller for speed (was 128)
-  hop_length: 160
-  win_length: 320 # REDUCED: Faster processing (was 400)
-  n_fft: 512 # REDUCED: 2x smaller for speed (was 1024)
+  n_mels: 32        # PHASE 3 OPTIMIZATION: Reduced from 64 for faster computation
+  hop_length: 80    # PHASE 3 OPTIMIZATION: Reduced from 160 for faster processing
+  win_length: 256   # PHASE 3 OPTIMIZATION: Reduced from 320 to match n_fft
+  n_fft: 256        # PHASE 3 OPTIMIZATION: Reduced from 512 for faster FFT
 
 streaming:
   enabled: true
-  chunk_mode: "sentence_streaming" # Stream sentence by sentence
-  max_connections: 50 # REDUCED: Focus resources (was 100)
-  buffer_size: 1024 # ULTRA-SMALL: 2x smaller (was 2048)
+  chunk_mode: "sentence_streaming"
+  max_connections: 50
+  buffer_size: 1024
   timeout_seconds: 300
-  latency_target_ms: 50 # ULTRA-AGGRESSIVE: 10x more aggressive (was 500)
+  latency_target_ms: 50
 
-# ADDED: Chunked Streaming Configuration
+# Chunked Response Configuration
 chunked_response:
   enabled: true
   min_words_per_chunk: 2
@@ -53,50 +55,10 @@ chunked_response:
   chunk_timeout_ms: 200
   separator_phrases: [". ", "? ", "! ", ", ", " and ", " but ", " so "]
 
-# ULTRA-FAST TTS
-tts:
-  engine: "kokoro"
-  default_voice: "hf_alpha"
-  sample_rate: 16000 # CRITICAL: Match audio pipeline
-  enabled: true
-  voice: "hf_alpha"
-  speed: 1.1 # SLIGHTLY FASTER: 10% speed boost
-  lang_code: "h"
-  # ULTRA-FAST performance
-  performance:
-    batch_size: 1
-    max_queue_size: 2 # ULTRA-MINIMAL: No queuing (was 8)
-    num_workers: 1 # SINGLE WORKER: Eliminate overhead
-    target_latency_ms: 75 # ULTRA-FAST: 25% faster (was 100ms)
-    quality_preset: "speed" # PRIORITIZE SPEED over quality
-
-  # TTS Streaming settings
-  streaming:
-    enabled: true
-    chunk_processing: true # Process TTS chunks immediately
-    max_queue_size: 2
-    target_latency_ms: 75
-
-# ULTRA-FAST Speech-to-Speech
-speech_to_speech:
-  enabled: true
-  latency_target_ms: 100 # ULTRA-AGGRESSIVE: 2x faster (was 200ms)
-  buffer_size: 1024 # ULTRA-SMALL: 4x smaller
-  output_format: "wav"
-  quality: "speed" # PRIORITIZE SPEED
-  emotional_expression: false # DISABLED: Skip emotion processing for speed
-
-  streaming:
-    enabled: true
-    mode: "word_level" # FASTEST possible mode
-    word_trigger_threshold: 1 # START after just 1 word
-    max_tokens: 25 # ULTRA-SHORT responses
-    interruption_detection: false # DISABLED: Skip for speed
-
-# ULTRA-FAST performance monitoring
+# Performance Monitoring
 performance:
   enable_monitoring: true
-  log_detailed_metrics: false # DISABLED: Reduce logging overhead
+  log_detailed_metrics: false
   latency_warning_threshold_ms: 500
   memory_monitoring: false # DISABLED: Reduce overhead
 
