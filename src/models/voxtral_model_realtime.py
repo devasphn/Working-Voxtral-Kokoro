@@ -378,6 +378,9 @@ class VoxtralModel:
             else:
                 prompt_text = "Transcribe exactly what you heard. Be precise with proper nouns and technical terms."
 
+            # CRITICAL FIX: Log the prompt being used to verify it's set correctly
+            realtime_logger.info(f"🎯 [CHUNK {chunk_id}] Mode: {mode}, Prompt: '{prompt_text}'")
+
             conversation = [
                 {
                     "role": "user",
@@ -394,11 +397,19 @@ class VoxtralModel:
                 }
             ]
 
+            # CRITICAL FIX: Verify conversation structure
+            realtime_logger.debug(f"🔍 [CHUNK {chunk_id}] Conversation structure: {conversation}")
+
             # Apply chat template
             inputs = self.processor.apply_chat_template(conversation, return_tensors="pt")
             inputs = inputs.to(self.device, dtype=torch.float16)
 
+            # CRITICAL FIX: Log input tokens to verify prompt is encoded
+            realtime_logger.debug(f"📊 [CHUNK {chunk_id}] Input shape: {inputs['input_ids'].shape}, tokens: {inputs['input_ids'].tolist()[:20]}...")
+
             # OPTIMIZED generation parameters for accuracy
+            realtime_logger.debug(f"🔧 [CHUNK {chunk_id}] Starting generation with use_cache=False")
+
             with torch.no_grad():
                 outputs = self.model.generate(
                     **inputs,
@@ -406,7 +417,7 @@ class VoxtralModel:
                     min_new_tokens=1,
                     do_sample=False,           # Deterministic
                     num_beams=1,               # Single beam
-                    use_cache=True,            # KV cache
+                    use_cache=False,           # CRITICAL FIX: Disable KV cache to prevent hallucinations from cached prompts
                     pad_token_id=self.processor.tokenizer.eos_token_id,
                     temperature=1.0,
                     top_p=0.95,                # Slightly higher for better accuracy
@@ -424,6 +435,9 @@ class VoxtralModel:
 
             # Decode response
             response_text = self.processor.batch_decode(outputs[:, inputs.input_ids.shape[1]:], skip_special_tokens=True)[0].strip()
+
+            # CRITICAL FIX: Log the generated response to detect transcription-only responses
+            realtime_logger.info(f"📝 [CHUNK {chunk_id}] Generated response: '{response_text}' (mode={mode})")
 
             # Clean up temp file
             try:
@@ -551,6 +565,9 @@ class VoxtralModel:
             else:
                 prompt_text = "Transcribe exactly what you heard. Be precise with proper nouns and technical terms."
 
+            # CRITICAL FIX: Log the prompt being used to verify it's set correctly
+            realtime_logger.info(f"🎯 [CHUNK {chunk_id}] Mode: {mode}, Prompt: '{prompt_text}'")
+
             # Create conversation with appropriate prompt
             conversation = [
                 {
@@ -562,8 +579,14 @@ class VoxtralModel:
                 }
             ]
 
+            # CRITICAL FIX: Verify conversation structure
+            realtime_logger.debug(f"🔍 [CHUNK {chunk_id}] Conversation structure: {conversation}")
+
             inputs = self.processor.apply_chat_template(conversation, return_tensors="pt")
             inputs = inputs.to(self.device, dtype=torch.float16)
+
+            # CRITICAL FIX: Log input tokens to verify prompt is encoded
+            realtime_logger.debug(f"📊 [CHUNK {chunk_id}] Input shape: {inputs['input_ids'].shape}, tokens: {inputs['input_ids'].tolist()[:20]}...")
 
             # OPTIMIZED CHUNKED GENERATION with streaming
             chunk_index = 0
@@ -587,11 +610,13 @@ class VoxtralModel:
                     "top_k": 50,               # Increased for better word selection
                     "streamer": streamer,
                     "pad_token_id": self.processor.tokenizer.eos_token_id,
-                    "use_cache": True,         # KV cache
+                    "use_cache": False,        # CRITICAL FIX: Disable KV cache to prevent hallucinations from cached prompts
                     "output_scores": False,
                     "return_dict_in_generate": False,
                     "synced_gpus": False
                 }
+
+                realtime_logger.debug(f"🔧 [CHUNK {chunk_id}] Generation kwargs: use_cache={generation_kwargs['use_cache']}, max_new_tokens={generation_kwargs['max_new_tokens']}")
 
                 # Start generation in background thread
                 import threading
@@ -603,11 +628,17 @@ class VoxtralModel:
 
                 # Stream chunks as they're generated
                 word_buffer = []
+                first_chunk_received = False
 
                 for new_text in streamer:
                     if new_text:
                         words = new_text.split()
                         word_buffer.extend(words)
+
+                        # CRITICAL FIX: Log first chunk to detect transcription-only responses
+                        if not first_chunk_received:
+                            first_chunk_received = True
+                            realtime_logger.info(f"📝 [CHUNK {chunk_id}] First generated text: '{new_text}' (mode={mode})")
 
                         # Send chunks of 5-7 words for natural speech
                         if len(word_buffer) >= 6:
