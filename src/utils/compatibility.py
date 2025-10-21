@@ -66,8 +66,6 @@ def check_mistral_common():
     """Check if mistral-common is available"""
     return compat_manager.check_package("mistral-common", "mistral_common")
 
-# Orpheus TTS support removed - using Kokoro TTS only
-
 def check_pydantic_settings():
     """Check if pydantic-settings is available"""
     return compat_manager.check_package("pydantic-settings", "pydantic_settings")
@@ -94,8 +92,6 @@ class FallbackVoxtralModel:
     
     async def process_realtime_chunk(self, audio_data, chunk_id):
         raise MissingPackageError("Voxtral not available - please install transformers>=4.56.0")
-
-# Orpheus TTS fallback model removed - using Kokoro TTS only
 
 class FallbackConfig:
     """Fallback configuration when pydantic-settings is not available"""
@@ -134,8 +130,6 @@ def get_voxtral_classes():
     else:
         compat_logger.warning("Voxtral not available - using fallback")
         return FallbackVoxtralModel, None
-
-# Orpheus TTS support removed - using Kokoro TTS only
 
 def get_config():
     """Get configuration with fallback"""
@@ -221,10 +215,7 @@ def test_compatibility():
     
     fallback_voxtral = FallbackVoxtralModel()
     print(f"Fallback Voxtral: {fallback_voxtral.get_model_info()}")
-    
-    # Orpheus fallback removed - using Kokoro TTS only
-    print("Orpheus TTS support removed - using Kokoro TTS exclusively")
-    
+
     fallback_config = FallbackConfig()
     print(f"Fallback Config: server.port = {fallback_config.server.port}")
     

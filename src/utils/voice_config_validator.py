@@ -163,17 +163,7 @@ class VoiceConfigurationValidator:
                 else:
                     missing_configs.append(".env.example:TTS_DEFAULT_VOICE not found")
                 
-                # Check KOKORO_VOICE
-                if "KOKORO_VOICE=" in env_content:
-                    for line in env_content.split('\n'):
-                        if line.startswith("KOKORO_VOICE="):
-                            kokoro_voice = line.split('=', 1)[1].strip()
-                            component_voices['.env.example:KOKORO_VOICE'] = kokoro_voice
-                            if kokoro_voice != self.expected_default_voice:
-                                conflicts.append(f".env.example:KOKORO_VOICE is '{kokoro_voice}', expected '{self.expected_default_voice}'")
-                            break
-                else:
-                    missing_configs.append(".env.example:KOKORO_VOICE not found")
+                # Voxtral is ASR only - no voice configuration needed
             else:
                 missing_configs.append(".env.example file not found")
             
@@ -183,40 +173,17 @@ class VoiceConfigurationValidator:
                 component_voices['runtime:TTS_DEFAULT_VOICE'] = runtime_tts_voice
                 if runtime_tts_voice != self.expected_default_voice:
                     conflicts.append(f"Runtime TTS_DEFAULT_VOICE is '{runtime_tts_voice}', expected '{self.expected_default_voice}'")
-            
-            runtime_kokoro_voice = os.getenv("KOKORO_VOICE")
-            if runtime_kokoro_voice:
-                component_voices['runtime:KOKORO_VOICE'] = runtime_kokoro_voice
-                if runtime_kokoro_voice != self.expected_default_voice:
-                    conflicts.append(f"Runtime KOKORO_VOICE is '{runtime_kokoro_voice}', expected '{self.expected_default_voice}'")
                     
         except Exception as e:
             validator_logger.error(f"❌ Error validating environment variables: {e}")
             conflicts.append(f"Error validating environment variables: {str(e)}")
     
-    def _validate_python_code_defaults(self, component_voices: Dict[str, str], 
+    def _validate_python_code_defaults(self, component_voices: Dict[str, str],
                                      conflicts: List[str], missing_configs: List[str]):
         """Validate Python code default voice parameters"""
         try:
-            # Check KokoroTTSModel DEFAULT_VOICE
-            kokoro_model_path = Path("src/models/kokoro_model_realtime.py")
-            if kokoro_model_path.exists():
-                with open(kokoro_model_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                
-                # Look for DEFAULT_VOICE definition
-                for line in content.split('\n'):
-                    if 'DEFAULT_VOICE' in line and '=' in line:
-                        # Extract the voice value
-                        voice_part = line.split('=', 1)[1].strip().strip('"\'')
-                        component_voices['kokoro_model_realtime.py:DEFAULT_VOICE'] = voice_part
-                        if voice_part != self.expected_default_voice:
-                            conflicts.append(f"KokoroTTSModel.DEFAULT_VOICE is '{voice_part}', expected '{self.expected_default_voice}'")
-                        break
-                else:
-                    missing_configs.append("KokoroTTSModel.DEFAULT_VOICE not found")
-            else:
-                missing_configs.append("src/models/kokoro_model_realtime.py not found")
+            # Voxtral model doesn't have voice configuration (ASR only)
+            pass
             
             # Check speech-to-speech pipeline DEFAULT_TTS_CONFIG
             pipeline_path = Path("src/models/speech_to_speech_pipeline.py")

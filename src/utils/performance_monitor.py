@@ -20,9 +20,8 @@ class PerformanceMonitor:
         # Performance targets (from config)
         self.targets = {
             'voxtral_processing_ms': 100,
-            'kokoro_generation_ms': 150,
             'audio_conversion_ms': 50,
-            'total_end_to_end_ms': 300
+            'total_end_to_end_ms': 100
         }
         
         # Timing storage

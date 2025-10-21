@@ -227,11 +227,6 @@ async def speech_to_speech_metrics() -> JSONResponse:
                 "voxtral_stt": {
                     "initialized": components.get("voxtral_stt", {}).get("is_initialized", False),
                     "model_type": components.get("voxtral_stt", {}).get("model_type", "unknown")
-                },
-                "kokoro_tts": {
-                    "initialized": components.get("kokoro_tts", {}).get("is_initialized", False),
-                    "model_type": components.get("kokoro_tts", {}).get("model_type", "unknown"),
-                    "current_voice": components.get("kokoro_tts", {}).get("current_voice", "unknown")
                 }
             }
 

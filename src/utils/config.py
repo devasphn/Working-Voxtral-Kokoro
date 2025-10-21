@@ -73,9 +73,8 @@ class PerformanceConfig(BaseModel):
     enable_monitoring: bool = True
     latency_targets: Dict[str, int] = {
         "voxtral_processing_ms": 100,
-        "kokoro_generation_ms": 150,
         "audio_conversion_ms": 50,
-        "total_end_to_end_ms": 300
+        "total_end_to_end_ms": 100
     }
     alert_thresholds: Dict[str, float] = {
         "consecutive_failures": 5,
@@ -89,18 +88,12 @@ class LoggingConfig(BaseModel):
     format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     file: str = "/workspace/logs/voxtral_streaming.log"
 
-class TTSVoicesConfig(BaseModel):
-    english: List[str] = ["af_heart", "af_bella", "af_nicole", "af_sarah"]  # Kokoro English voices
-    hindi: List[str] = ["hf_alpha", "hf_beta", "hm_psi"]  # Kokoro Hindi voices
-
-# Orpheus configuration classes removed - using Kokoro TTS only
-
 class TTSPerformanceConfig(BaseModel):
-    """TTS performance and optimization settings"""
-    batch_size: int = 1  # Direct integration uses batch_size=1
+    """Performance optimization settings"""
+    batch_size: int = 1
     max_queue_size: int = 32
     num_workers: int = 4
-    target_latency_ms: int = 150  # Target for TTS generation
+    target_latency_ms: int = 100  # Target for ASR processing
     memory_optimization: str = "balanced"  # "performance", "balanced", "memory_efficient"
 
 class GPUMemoryConfig(BaseModel):

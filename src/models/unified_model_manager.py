@@ -1,6 +1,6 @@
 """
-Unified Model Manager for Kokoro TTS Integration
-Centralized management of both Voxtral and Kokoro TTS models with shared GPU memory
+Unified Model Manager for Voxtral ASR
+Centralized management of Voxtral model with GPU memory optimization
 """
 
 import asyncio
@@ -14,7 +14,6 @@ import gc
 import numpy as np
 # Import model classes
 from src.models.voxtral_model_realtime import VoxtralModel
-from src.models.kokoro_model_realtime import KokoroTTSModel
 from src.utils.gpu_memory_manager import GPUMemoryManager, InsufficientVRAMError
 
 # Setup logging
@@ -27,20 +26,18 @@ class ModelInitializationError(Exception):
 
 class UnifiedModelManager:
     """
-    Centralized management of both Voxtral and Kokoro TTS models
-    Handles initialization order, memory sharing, and lifecycle management
+    Centralized management of Voxtral ASR model
+    Handles initialization, memory optimization, and lifecycle management
     """
 
     def __init__(self):
         self.voxtral_model = None
-        self.kokoro_model = None
         self.gpu_memory_manager = None
         self.initialization_lock = Lock()
         self.is_initialized = False
 
         # Initialization state tracking
         self.voxtral_initialized = False
-        self.kokoro_initialized = False
         self.memory_manager_initialized = False
 
         # Performance tracking
@@ -158,7 +155,7 @@ class UnifiedModelManager:
     
     async def initialize(self) -> bool:
         """
-        Initialize both models with optimal memory management
+        Initialize Voxtral model with optimal memory management
         Returns True if successful, raises ModelInitializationError on failure
         """
         try:
@@ -166,31 +163,30 @@ class UnifiedModelManager:
                 if self.is_initialized:
                     unified_logger.info("✅ Models already initialized")
                     return True
-                
+
                 unified_logger.info("🚀 Starting unified model initialization...")
                 total_start_time = time.time()
-                
+
                 # Step 1: Initialize GPU Memory Manager
                 await self._initialize_memory_manager()
-                
-                # Step 2: Initialize models in optimal order (Voxtral first for memory layout)
+
+                # Step 2: Initialize Voxtral model
                 await self._initialize_voxtral_model()
-                await self._initialize_kokoro_model()
 
                 # Step 3: Verify initialization and optimize memory
                 await self._post_initialization_optimization()
-                
+
                 total_time = time.time() - total_start_time
                 self.initialization_times["total"] = total_time
-                
+
                 self.is_initialized = True
                 unified_logger.info(f"🎉 Unified model initialization completed in {total_time:.2f}s")
-                
+
                 # Log final memory statistics
                 await self._log_memory_statistics()
-                
+
                 return True
-                
+
         except Exception as e:
             unified_logger.error(f"❌ Unified model initialization failed: {e}")
             await self._cleanup_partial_initialization()
@@ -251,39 +247,7 @@ class UnifiedModelManager:
             unified_logger.error(f"❌ Voxtral initialization failed: {e}")
             raise ModelInitializationError(f"Voxtral initialization failed: {e}")
     
-    async def _initialize_kokoro_model(self):
-        """Initialize Kokoro TTS model"""
-        try:
-            unified_logger.info("🎵 Initializing Kokoro TTS model...")
-            start_time = time.time()
 
-            # Create Kokoro TTS Model
-            self.kokoro_model = KokoroTTSModel()
-
-            # Initialize the model
-            success = await self.kokoro_model.initialize()
-
-            if not success:
-                unified_logger.error("❌ Kokoro TTS model initialization failed")
-                raise ModelInitializationError("Kokoro TTS model initialization failed")
-
-            # Track memory usage
-            if self.gpu_memory_manager.device == "cuda":
-                total_memory = torch.cuda.memory_allocated() / (1024**3)
-                tts_memory = total_memory - self.memory_usage.get("voxtral_gb", 0)
-                self.gpu_memory_manager.track_model_memory("kokoro", tts_memory)
-                self.memory_usage["kokoro_gb"] = tts_memory
-
-            self.kokoro_initialized = True
-            init_time = time.time() - start_time
-            self.initialization_times["kokoro"] = init_time
-
-            unified_logger.info(f"✅ Kokoro TTS model initialized in {init_time:.2f}s")
-
-        except Exception as e:
-            unified_logger.error(f"❌ Kokoro TTS model initialization failed: {e}")
-            raise ModelInitializationError(f"Kokoro TTS model initialization failed: {e}")
-    
     async def _post_initialization_optimization(self):
         """Perform post-initialization memory optimization"""
         try:
@@ -310,27 +274,19 @@ class UnifiedModelManager:
             raise ModelInitializationError(f"Post-initialization optimization failed: {e}")
     
     async def _verify_model_functionality(self):
-        """Verify both models are functioning correctly"""
+        """Verify Voxtral model is functioning correctly"""
         try:
             unified_logger.info("🔍 Verifying model functionality...")
-            
+
             # Test Voxtral model
             if self.voxtral_model and self.voxtral_model.is_initialized:
                 model_info = self.voxtral_model.get_model_info()
                 if model_info.get("status") != "initialized":
                     raise ModelInitializationError("Voxtral model verification failed")
                 unified_logger.info("✅ Voxtral model verification passed")
-            
-            # Test Kokoro TTS model
-            if self.kokoro_model and self.kokoro_model.is_initialized:
-                model_info = self.kokoro_model.get_model_info()
-                if not model_info.get("is_initialized"):
-                    raise ModelInitializationError("Kokoro TTS model verification failed")
 
-                unified_logger.info("✅ Kokoro TTS model verification passed")
-            
             unified_logger.info("✅ All model functionality verified")
-            
+
         except Exception as e:
             unified_logger.error(f"❌ Model verification failed: {e}")
             raise ModelInitializationError(f"Model verification failed: {e}")
@@ -340,22 +296,21 @@ class UnifiedModelManager:
         try:
             if self.gpu_memory_manager:
                 stats = self.gpu_memory_manager.get_memory_stats()
-                
+
                 unified_logger.info("📊 Final Memory Statistics:")
                 unified_logger.info(f"   Total VRAM: {stats.total_vram_gb:.2f} GB")
                 unified_logger.info(f"   Used VRAM: {stats.used_vram_gb:.2f} GB")
                 unified_logger.info(f"   Available VRAM: {stats.available_vram_gb:.2f} GB")
                 unified_logger.info(f"   Voxtral Memory: {stats.voxtral_memory_gb:.2f} GB")
-                unified_logger.info(f"   Kokoro Memory: {stats.kokoro_memory_gb:.2f} GB")
                 unified_logger.info(f"   System RAM: {stats.system_ram_gb:.2f} GB")
                 unified_logger.info(f"   System RAM Used: {stats.system_ram_used_gb:.2f} GB")
-                
+
                 # Calculate efficiency metrics
-                total_model_memory = stats.voxtral_memory_gb + stats.kokoro_memory_gb
+                total_model_memory = stats.voxtral_memory_gb
                 memory_efficiency = (total_model_memory / stats.used_vram_gb * 100) if stats.used_vram_gb > 0 else 0
-                
+
                 unified_logger.info(f"   Memory Efficiency: {memory_efficiency:.1f}%")
-                
+
         except Exception as e:
             unified_logger.warning(f"⚠️ Failed to log memory statistics: {e}")
     
@@ -363,23 +318,18 @@ class UnifiedModelManager:
         """Cleanup resources from partial initialization"""
         try:
             unified_logger.info("🧹 Cleaning up partial initialization...")
-            
-            if self.kokoro_model:
-                await self.kokoro_model.cleanup()
-                self.kokoro_model = None
-                self.kokoro_initialized = False
-            
+
             if self.voxtral_model:
                 # Voxtral model doesn't have async cleanup, but we can clear references
                 self.voxtral_model = None
                 self.voxtral_initialized = False
-            
+
             if self.gpu_memory_manager:
                 self.gpu_memory_manager.cleanup_unused_memory()
-            
+
             self.is_initialized = False
             unified_logger.info("✅ Partial initialization cleanup completed")
-            
+
         except Exception as e:
             unified_logger.error(f"❌ Cleanup failed: {e}")
     
@@ -388,12 +338,6 @@ class UnifiedModelManager:
         if not self.is_initialized or not self.voxtral_initialized:
             raise ModelInitializationError("Voxtral model not initialized")
         return self.voxtral_model
-    
-    async def get_kokoro_model(self) -> Optional[KokoroTTSModel]:
-        """Get initialized Kokoro TTS model"""
-        if not self.is_initialized or not self.kokoro_initialized:
-            raise ModelInitializationError("Kokoro TTS model not initialized")
-        return self.kokoro_model
     
     async def cleanup_gpu_memory(self) -> None:
         """Cleanup GPU memory and run garbage collection"""
@@ -419,32 +363,29 @@ class UnifiedModelManager:
         try:
             if not self.gpu_memory_manager:
                 return {"error": "Memory manager not initialized"}
-            
+
             base_stats = self.gpu_memory_manager.get_memory_stats()
-            
+
             return {
                 "memory_stats": {
                     "total_vram_gb": base_stats.total_vram_gb,
                     "used_vram_gb": base_stats.used_vram_gb,
                     "available_vram_gb": base_stats.available_vram_gb,
                     "voxtral_memory_gb": base_stats.voxtral_memory_gb,
-                    "kokoro_memory_gb": base_stats.kokoro_memory_gb,
                     "system_ram_gb": base_stats.system_ram_gb,
                     "system_ram_used_gb": base_stats.system_ram_used_gb
                 },
                 "initialization_stats": {
                     "is_initialized": self.is_initialized,
                     "voxtral_initialized": self.voxtral_initialized,
-                    "kokoro_initialized": self.kokoro_initialized,
                     "initialization_times": self.initialization_times
                 },
                 "model_info": {
                     "voxtral_available": self.voxtral_model is not None,
-                    "kokoro_available": self.kokoro_model is not None,
                     "device": self.gpu_memory_manager.device if self.gpu_memory_manager else "unknown"
                 }
             }
-            
+
         except Exception as e:
             unified_logger.error(f"❌ Failed to get memory stats: {e}")
             return {"error": str(e)}
@@ -456,40 +397,35 @@ class UnifiedModelManager:
                 "unified_manager": {
                     "is_initialized": self.is_initialized,
                     "voxtral_initialized": self.voxtral_initialized,
-                    "kokoro_initialized": self.kokoro_initialized,
                     "memory_manager_initialized": self.memory_manager_initialized
                 },
                 "initialization_times": self.initialization_times,
                 "memory_usage": self.memory_usage
             }
-            
+
             # Add Voxtral model info
             if self.voxtral_model:
                 info["voxtral"] = self.voxtral_model.get_model_info()
-            
-            # Add Kokoro model info
-            if self.kokoro_model:
-                info["kokoro"] = self.kokoro_model.get_model_info()
-            
+
             # Add memory manager info
             if self.gpu_memory_manager:
                 info["memory_manager"] = self.get_memory_stats()
-            
+
             return info
-            
+
         except Exception as e:
             unified_logger.error(f"❌ Failed to get model info: {e}")
             return {"error": str(e)}
     
     async def process_streaming_conversation(self, audio_data: Union[torch.Tensor, np.ndarray], chunk_id: str) -> AsyncGenerator[Dict[str, Any], None]:
         """Process conversation with CHUNKED STREAMING
-        Yields both text chunks and audio chunks in real-time"""
+        Yields text chunks in real-time"""
         if not self.is_initialized:
             raise RuntimeError("UnifiedModelManager not initialized")
-        
+
         try:
             unified_logger.info(f"🎯 Starting STREAMING conversation for {chunk_id}")
-            
+
             # Process audio with streaming Voxtral
             async for text_chunk in self.voxtral_model.process_realtime_chunk_streaming(
                 audio_data, chunk_id, mode="conversation"
@@ -499,43 +435,12 @@ class UnifiedModelManager:
                     'type': 'text_chunk',
                     'data': text_chunk
                 }
-                
-                # Generate TTS for this chunk in parallel
-                if text_chunk['text'].strip():
-                    try:
-                        # Generate TTS audio for this chunk
-                        tts_result = await self.kokoro_model.synthesize_speech(
-                            text=text_chunk['text'],
-                            chunk_id=text_chunk['chunk_id']
-                        )
-                        
-                        if tts_result['success'] and len(tts_result['audio_data']) > 0:
-                            # Yield the audio chunk
-                            yield {
-                                'type': 'audio_chunk',
-                                'data': {
-                                    'chunk_id': text_chunk['chunk_id'],
-                                    'audio_data': tts_result['audio_data'],
-                                    'sample_rate': tts_result['sample_rate'],
-                                    'duration_ms': tts_result.get('audio_duration_s', 0) * 1000,
-                                    'synthesis_time_ms': tts_result['synthesis_time_ms'],
-                                    'text': text_chunk['text'],
-                                    'chunk_number': text_chunk.get('chunk_number', 1),
-                                    'is_final': text_chunk.get('is_final', False)
-                                }
-                            }
-                            
-                            unified_logger.info(f"🎵 TTS chunk {text_chunk['chunk_id']} ready: {len(tts_result['audio_data'])} samples")
-                            
-                    except Exception as e:
-                        unified_logger.error(f"❌ TTS error for chunk {text_chunk['chunk_id']}: {e}")
-                        # Continue with next chunk even if TTS fails
-            
+
             unified_logger.info(f"✅ STREAMING conversation complete for {chunk_id}")
-            
+
         except Exception as e:
             unified_logger.error(f"❌ STREAMING conversation error for {chunk_id}: {e}")
-            
+
             # Yield error response
             yield {
                 'type': 'error',
@@ -547,38 +452,27 @@ class UnifiedModelManager:
             }
     
     async def process_conversation_chunk(self, audio_data: Union[torch.Tensor, np.ndarray], chunk_id: str) -> Dict[str, Any]:
-        """Process conversation chunk - EXACT WORKING VERSION from logs[1]"""
+        """Process conversation chunk with Voxtral ASR only"""
         if not self.is_initialized:
             raise RuntimeError("UnifiedModelManager not initialized")
-        
+
         try:
             unified_logger.info(f"🎯 Processing conversation chunk {chunk_id}")
-            
-            # Process audio with Voxtral (WORKING approach from logs[1])
+
+            # Process audio with Voxtral
             voxtral_result = await self.voxtral_model.process_realtime_chunk(
                 audio_data, chunk_id, mode="conversation"
             )
-            
+
             if voxtral_result['success'] and voxtral_result['text'].strip():
-                # Generate TTS (WORKING approach from logs[1])
-                tts_result = await self.kokoro_model.synthesize_speech(
-                    text=voxtral_result['text'],
-                    chunk_id=f"tts_{chunk_id}"
-                )
-                
-                # WORKING: Return structure that matches your successful logs[1]
+                # Return Voxtral result
                 response = {
                     'success': True,
                     'text': voxtral_result['text'],
                     'processing_time_ms': voxtral_result.get('processing_time_ms', 0),
-                    'voxtral_time_ms': voxtral_result.get('processing_time_ms', 0),
-                    'tts_time_ms': tts_result.get('synthesis_time_ms', 0),
-                    'audio_data': tts_result.get('audio_data', np.array([])),
-                    'sample_rate': tts_result.get('sample_rate', 16000),
-                    'audio_duration_s': tts_result.get('audio_duration_s', 0),
-                    'tts_success': tts_result.get('success', False)
+                    'voxtral_time_ms': voxtral_result.get('processing_time_ms', 0)
                 }
-                
+
                 unified_logger.info(f"✅ CONVERSATION processing complete for chunk {chunk_id}")
                 return response
             else:
@@ -587,7 +481,7 @@ class UnifiedModelManager:
                     'text': "Sorry, I didn't understand that.",
                     'error': voxtral_result.get('error', 'No speech detected or processing failed')
                 }
-                
+
         except Exception as e:
             unified_logger.error(f"❌ Conversation processing error for {chunk_id}: {e}")
             return {
@@ -600,24 +494,18 @@ class UnifiedModelManager:
         """Shutdown and cleanup all resources"""
         try:
             unified_logger.info("🛑 Shutting down Unified Model Manager...")
-            
-            # Cleanup Kokoro model
-            if self.kokoro_model:
-                await self.kokoro_model.cleanup()
-                self.kokoro_model = None
-                self.kokoro_initialized = False
-            
+
             # Cleanup Voxtral model (no async cleanup available)
             if self.voxtral_model:
                 self.voxtral_model = None
                 self.voxtral_initialized = False
-            
+
             # Final memory cleanup
             if self.gpu_memory_manager:
                 self.gpu_memory_manager.cleanup_unused_memory()
                 self.gpu_memory_manager = None
                 self.memory_manager_initialized = False
-            
+
             # Clear state
             self.is_initialized = False
             self.initialization_times.clear()

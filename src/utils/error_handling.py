@@ -1,5 +1,5 @@
 """
-Comprehensive Error Handling System for Kokoro TTS Integration
+Comprehensive Error Handling System for Voxtral ASR
 Centralized error handling, recovery mechanisms, and error analytics
 """
 

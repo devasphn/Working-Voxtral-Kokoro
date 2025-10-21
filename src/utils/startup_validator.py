@@ -232,10 +232,7 @@ class StartupValidator:
                 except ImportError:
                     critical_errors.append("PyTorch not available but required for model operations")
             
-            # Check TTS engine configuration
-            tts_engine = getattr(config.tts, 'engine', None)
-            if tts_engine != 'kokoro':
-                warnings.append(f"Unexpected TTS engine configured: {tts_engine}")
+            # Voxtral is ASR only - no TTS engine needed
             
             validation_passed = len([e for e in critical_errors if "model" in e.lower() or "torch" in e.lower()]) == 0
             
