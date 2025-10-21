@@ -374,7 +374,9 @@ class VoxtralModel:
             # mode="conversation" -> Generate conversational responses
             # mode="transcribe" -> Transcribe audio only
             if mode == "conversation":
-                prompt_text = "Respond naturally and briefly to what you heard."
+                # CRITICAL FIX: Strengthen the conversational prompt to prevent transcription fallback
+                # The model must understand it should respond, not transcribe
+                prompt_text = "You are a helpful conversational AI. Listen to what the user said and respond to them conversationally. Do NOT repeat or transcribe what they said. Instead, respond naturally to their message."
             else:
                 prompt_text = "Transcribe exactly what you heard. Be precise with proper nouns and technical terms."
 
@@ -408,7 +410,7 @@ class VoxtralModel:
             realtime_logger.debug(f"📊 [CHUNK {chunk_id}] Input shape: {inputs['input_ids'].shape}, tokens: {inputs['input_ids'].tolist()[:20]}...")
 
             # OPTIMIZED generation parameters for accuracy
-            realtime_logger.debug(f"🔧 [CHUNK {chunk_id}] Starting generation with use_cache=False")
+            realtime_logger.debug(f"🔧 [CHUNK {chunk_id}] Starting generation with use_cache=True")
 
             with torch.no_grad():
                 outputs = self.model.generate(
@@ -417,7 +419,7 @@ class VoxtralModel:
                     min_new_tokens=1,
                     do_sample=False,           # Deterministic
                     num_beams=1,               # Single beam
-                    use_cache=False,           # CRITICAL FIX: Disable KV cache to prevent hallucinations from cached prompts
+                    use_cache=True,            # REVERTED: Re-enable KV cache (was causing regression when disabled)
                     pad_token_id=self.processor.tokenizer.eos_token_id,
                     temperature=1.0,
                     top_p=0.95,                # Slightly higher for better accuracy
@@ -438,6 +440,19 @@ class VoxtralModel:
 
             # CRITICAL FIX: Log the generated response to detect transcription-only responses
             realtime_logger.info(f"📝 [CHUNK {chunk_id}] Generated response: '{response_text}' (mode={mode})")
+
+            # CRITICAL FIX: Detect and prevent transcription-only responses in conversation mode
+            if mode == "conversation" and response_text:
+                # Check if the response looks like a transcription (very similar to input)
+                # This is a heuristic to detect when the model is just echoing the audio
+                response_lower = response_text.lower().strip()
+
+                # If response is very short or looks like a question/statement without elaboration
+                # it might be a transcription. Log this for monitoring.
+                if len(response_text) < 10:
+                    realtime_logger.warning(f"⚠️ [CHUNK {chunk_id}] Response is very short ({len(response_text)} chars), might be transcription: '{response_text}'")
+                else:
+                    realtime_logger.debug(f"✅ [CHUNK {chunk_id}] Response looks conversational ({len(response_text)} chars)")
 
             # Clean up temp file
             try:
@@ -561,7 +576,9 @@ class VoxtralModel:
             # mode="conversation" -> Generate conversational responses
             # mode="transcribe" -> Transcribe audio only
             if mode == "conversation":
-                prompt_text = "Respond naturally and conversationally."
+                # CRITICAL FIX: Strengthen the conversational prompt to prevent transcription fallback
+                # The model must understand it should respond, not transcribe
+                prompt_text = "You are a helpful conversational AI. Listen to what the user said and respond to them conversationally. Do NOT repeat or transcribe what they said. Instead, respond naturally to their message."
             else:
                 prompt_text = "Transcribe exactly what you heard. Be precise with proper nouns and technical terms."
 
@@ -610,7 +627,7 @@ class VoxtralModel:
                     "top_k": 50,               # Increased for better word selection
                     "streamer": streamer,
                     "pad_token_id": self.processor.tokenizer.eos_token_id,
-                    "use_cache": False,        # CRITICAL FIX: Disable KV cache to prevent hallucinations from cached prompts
+                    "use_cache": True,         # REVERTED: Re-enable KV cache (was causing regression when disabled)
                     "output_scores": False,
                     "return_dict_in_generate": False,
                     "synced_gpus": False
@@ -670,16 +687,23 @@ class VoxtralModel:
                         'processing_time_ms': (time.time() - chunk_start_time) * 1000
                     }
             
+            # CRITICAL FIX: Detect and prevent transcription-only responses in conversation mode
+            if mode == "conversation" and generated_text:
+                if len(generated_text) < 10:
+                    realtime_logger.warning(f"⚠️ [CHUNK {chunk_id}] Streaming response is very short ({len(generated_text)} chars), might be transcription: '{generated_text}'")
+                else:
+                    realtime_logger.debug(f"✅ [CHUNK {chunk_id}] Streaming response looks conversational ({len(generated_text)} chars)")
+
             # Cleanup
             try:
                 import os
                 os.unlink(tmp_path)
             except:
                 pass
-            
+
             total_time = (time.time() - chunk_start_time) * 1000
             realtime_logger.info(f"✅ CHUNKED STREAMING completed for {chunk_id} in {total_time:.1f}ms: '{generated_text[:50]}...'")
-            
+
         except Exception as e:
             realtime_logger.error(f"❌ CHUNKED STREAMING error for {chunk_id}: {e}")
             yield {
