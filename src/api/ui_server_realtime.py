@@ -788,6 +788,10 @@ async def home(request: Request):
                     }
 
                     log(`Conversation complete: ${data.total_latency_ms}ms (target: ${data.meets_target ? 'met' : 'exceeded'})`);
+
+                    // CRITICAL FIX: Reset VAD state for continuous streaming
+                    // This allows the next utterance to be detected and processed
+                    resetForNextInput();
                     break;
 
                 default:
@@ -862,13 +866,17 @@ async def home(request: Request):
         function resetForNextInput() {
             pendingResponse = false;
             updateVadStatus('silence');
-            
+
             // Reset speech detection state
             isSpeechActive = false;
             speechStartTime = null;
             lastSpeechTime = null;
             silenceStartTime = null;
-            
+
+            // CRITICAL: Reset audio buffer for continuous streaming
+            continuousAudioBuffer = [];
+            lastResponseText = '';
+
             log('🔄 Ready for next input');
         }
 
