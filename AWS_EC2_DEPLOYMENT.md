@@ -199,6 +199,114 @@ nvidia-smi
 
 ---
 
+## 4.5 HTTPS SETUP (REQUIRED for Microphone Access)
+
+**⚠️ CRITICAL**: Browsers require HTTPS for microphone access on remote servers (except localhost).
+
+### Option A: Using Let's Encrypt (Recommended - Free)
+
+```bash
+# 1. Install Certbot
+sudo apt install -y certbot python3-certbot-nginx
+
+# 2. Get certificate (replace example.com with your domain)
+sudo certbot certonly --standalone -d example.com -d www.example.com
+
+# 3. Create nginx config
+sudo tee /etc/nginx/sites-available/voxtral > /dev/null << 'EOF'
+server {
+    listen 443 ssl http2;
+    server_name example.com www.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://localhost:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen 80;
+    server_name example.com www.example.com;
+    return 301 https://$server_name$request_uri;
+}
+EOF
+
+# 4. Enable nginx config
+sudo ln -sf /etc/nginx/sites-available/voxtral /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl restart nginx
+
+# 5. Auto-renew certificates
+sudo systemctl enable certbot.timer
+sudo systemctl start certbot.timer
+```
+
+### Option B: Using Self-Signed Certificate (Development Only)
+
+```bash
+# 1. Generate self-signed certificate
+sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /etc/ssl/private/voxtral.key \
+  -out /etc/ssl/certs/voxtral.crt \
+  -subj "/CN=98.89.99.129"
+
+# 2. Create nginx config
+sudo tee /etc/nginx/sites-available/voxtral > /dev/null << 'EOF'
+server {
+    listen 443 ssl http2;
+    server_name _;
+
+    ssl_certificate /etc/ssl/certs/voxtral.crt;
+    ssl_certificate_key /etc/ssl/private/voxtral.key;
+
+    location / {
+        proxy_pass http://localhost:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen 80;
+    server_name _;
+    return 301 https://$server_name$request_uri;
+}
+EOF
+
+# 3. Enable and restart nginx
+sudo ln -sf /etc/nginx/sites-available/voxtral /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl restart nginx
+```
+
+### Option C: Access via Localhost (Development Only)
+
+If you don't want to set up HTTPS, you can access the application via localhost:
+
+```bash
+# 1. SSH into EC2 with port forwarding
+ssh -i your-key.pem -L 8000:localhost:8000 ubuntu@98.89.99.129
+
+# 2. Access via browser
+http://localhost:8000/
+```
+
+---
+
 ## 5. VERIFICATION STEPS
 
 ### Health Check
@@ -309,6 +417,56 @@ curl -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" \
 2. Check WebSocket URL: Should be `ws://98.83.35.212:8000/ws` (with port)
 3. Check server logs: `tail -f logs/voxtral_streaming.log`
 4. Should see: `[CONVERSATION] Client connected: 98.83.35.212:xxxxx`
+
+### getUserMedia Error: "Cannot read properties of undefined (reading 'getUserMedia')"
+
+**Root Cause**: Browsers require HTTPS for microphone access on remote servers (except localhost).
+
+**Error Details**:
+```
+TypeError: Cannot read properties of undefined (reading 'getUserMedia')
+    at startConversation ((index):1266:60)
+```
+
+**Why This Happens**:
+1. You're accessing via HTTP (e.g., `http://98.89.99.129:8000/`)
+2. Browsers block microphone access over HTTP for security reasons
+3. Exception: localhost and 127.0.0.1 are allowed over HTTP
+4. `navigator.mediaDevices` is undefined when accessed over HTTP
+
+**Solutions** (in order of preference):
+
+**Option 1: Set up HTTPS (Recommended)**
+```bash
+# Follow the HTTPS setup instructions in Section 4.5
+# Use Let's Encrypt for free SSL certificates
+# Then access via: https://your-domain.com
+```
+
+**Option 2: Access via Localhost (Development)**
+```bash
+# SSH with port forwarding
+ssh -i your-key.pem -L 8000:localhost:8000 ubuntu@98.89.99.129
+
+# Access via browser
+http://localhost:8000/
+```
+
+**Option 3: Use Self-Signed Certificate (Development)**
+```bash
+# Follow Option B in Section 4.5
+# Then access via: https://98.89.99.129
+# Note: Browser will show security warning (click "Advanced" > "Proceed")
+```
+
+**Verification**:
+1. Open browser console (F12)
+2. Look for log message:
+   - ✅ If HTTPS: `🎯 [WEBSOCKET] URL detected: wss://...`
+   - ❌ If HTTP on remote: `❌ Microphone Access Error: HTTPS Required`
+3. Check browser address bar:
+   - ✅ Should show `https://` (with lock icon)
+   - ❌ Should NOT show `http://` (without lock icon)
 
 ### WebRTC Connection Issues
 - Check Security Group rules

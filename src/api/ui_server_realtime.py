@@ -495,6 +495,52 @@ async def home(request: Request):
         // Mode variables (Voxtral ASR-only)
         let currentMode = 'transcribe';
 
+        // ============================================================================
+        // Browser Compatibility & Feature Detection
+        // ============================================================================
+
+        /**
+         * Check if browser supports getUserMedia API
+         * CRITICAL: Browsers require HTTPS for microphone access (except localhost)
+         */
+        function checkMediaDevicesSupport() {
+            const hostname = window.location.hostname;
+            const protocol = window.location.protocol;
+
+            // Check if navigator.mediaDevices exists
+            if (!navigator.mediaDevices) {
+                return {
+                    supported: false,
+                    reason: 'Your browser does not support the MediaDevices API',
+                    solution: 'Please use a modern browser (Chrome, Firefox, Safari, Edge)'
+                };
+            }
+
+            // Check if getUserMedia is available
+            if (!navigator.mediaDevices.getUserMedia) {
+                return {
+                    supported: false,
+                    reason: 'Your browser does not support getUserMedia',
+                    solution: 'Please use a modern browser with microphone support'
+                };
+            }
+
+            // Check HTTPS requirement (except for localhost)
+            if (protocol !== 'https:' && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+                return {
+                    supported: false,
+                    reason: `⚠️ HTTPS Required: Browsers require HTTPS for microphone access on remote servers. You are accessing via HTTP (${hostname})`,
+                    solution: 'Please set up HTTPS on your AWS EC2 instance or access via localhost:8000',
+                    isHttpsIssue: true
+                };
+            }
+
+            return {
+                supported: true,
+                reason: 'MediaDevices API is available'
+            };
+        }
+
         // Initialize audio context properly
         function initializeAudioContext() {
             if (!audioContext) {
@@ -1319,6 +1365,21 @@ async def home(request: Request):
             pendingResponse = false;
             lastResponseText = '';
 
+            // CRITICAL: Check browser support for microphone access
+            const mediaSupport = checkMediaDevicesSupport();
+            if (!mediaSupport.supported) {
+                const errorMsg = `❌ Microphone Access Error: ${mediaSupport.reason}`;
+                log(errorMsg);
+                updateStatus(errorMsg, 'error');
+
+                if (mediaSupport.isHttpsIssue) {
+                    log('📋 SOLUTION: Set up HTTPS on AWS EC2 or access via localhost:8000');
+                    log('📋 See AWS_EC2_DEPLOYMENT.md for HTTPS setup instructions');
+                }
+
+                throw new Error(mediaSupport.reason);
+            }
+
             // CRITICAL: Ensure WebSocket is connected first
             if (!ws || ws.readyState !== WebSocket.OPEN) {
                 log('WebSocket not connected - establishing connection first...');
@@ -1338,9 +1399,10 @@ async def home(request: Request):
             }
 
             try {
-                log('Starting conversational audio streaming with VAD...');
+                log('🎤 Starting conversational audio streaming with VAD...');
                 updateStatus('Initializing microphone for conversation...', 'loading');
-                
+
+                // Request microphone access with proper error handling
                 mediaStream = await navigator.mediaDevices.getUserMedia({
                     audio: {
                         sampleRate: SAMPLE_RATE,
@@ -1452,8 +1514,33 @@ async def home(request: Request):
                 log('Conversational streaming with VAD started successfully');
                 
             } catch (error) {
-                updateStatus('Failed to start conversation: ' + error.message, 'error');
-                log('Conversation start failed: ' + error.message);
+                // Enhanced error handling for getUserMedia failures
+                let errorMessage = error.message;
+                let solution = '';
+
+                // Handle specific error types
+                if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                    errorMessage = '❌ Microphone Permission Denied: You denied microphone access';
+                    solution = 'Please allow microphone access when prompted by your browser';
+                } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+                    errorMessage = '❌ No Microphone Found: No microphone device detected';
+                    solution = 'Please connect a microphone to your computer';
+                } else if (error.name === 'NotSupportedError') {
+                    errorMessage = '❌ Not Supported: Your browser does not support microphone access';
+                    solution = 'Please use a modern browser (Chrome, Firefox, Safari, Edge)';
+                } else if (error.name === 'SecurityError') {
+                    errorMessage = '❌ Security Error: HTTPS is required for microphone access on remote servers';
+                    solution = 'Please set up HTTPS on your AWS EC2 instance or access via localhost:8000';
+                } else if (error.name === 'TypeError' && error.message.includes('getUserMedia')) {
+                    errorMessage = '❌ Browser Compatibility Error: getUserMedia API not available';
+                    solution = 'Please use a modern browser with microphone support';
+                }
+
+                updateStatus('Failed to start conversation: ' + errorMessage, 'error');
+                log('❌ Conversation start failed: ' + errorMessage);
+                if (solution) {
+                    log('💡 Solution: ' + solution);
+                }
                 console.error('Conversation error:', error);
             }
         }
