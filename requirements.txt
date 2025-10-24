@@ -1,6 +1,6 @@
 # PRODUCTION-READY Voxtral Model Requirements
 # Core components: VAD + ASR + LLM
-# Optimized for RunPod deployment
+# Optimized for AWS EC2 deployment with WebRTC
 
 # Core PyTorch Stack (CUDA 12.1 compatible)
 torch>=2.1.0,<2.5.0
@@ -31,6 +31,12 @@ pydantic-settings>=2.1.0
 python-multipart>=0.0.6
 aiofiles>=23.2.1
 httpx>=0.25.0
+
+# WebRTC Support - AWS EC2 optimized
+aiortc>=1.5.0
+av>=10.0.0
+python-socketio>=5.9.0
+python-engineio>=4.7.0
 
 # Audio processing and system utilities
 pyaudio>=0.2.11

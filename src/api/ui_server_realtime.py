@@ -1,6 +1,7 @@
 """
 FIXED UI server for CONVERSATIONAL real-time streaming
 Improved WebSocket handling and silence detection UI feedback
+AWS EC2 optimized with WebRTC support
 """
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -15,6 +16,7 @@ from pathlib import Path
 import logging
 import sys
 import os
+import uuid
 
 # Add current directory to Python path if not already there
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -455,7 +457,14 @@ async def home(request: Request):
     </div>
     
     <script>
+        // ============================================================================
+        // WebSocket & WebRTC Configuration
+        // ============================================================================
         let ws = null;
+        let peerConnection = null;
+        let clientId = null;
+        let useWebRTC = false;  // Toggle between WebSocket and WebRTC
+
         let audioContext = null;
         let mediaStream = null;
         let audioWorkletNode = null;
@@ -482,7 +491,7 @@ async def home(request: Request):
         let audioQueue = [];
         let isPlayingAudio = false;
         let currentAudio = null;
-        
+
         // Mode variables (Voxtral ASR-only)
         let currentMode = 'transcribe';
 
@@ -678,6 +687,97 @@ async def home(request: Request):
         function addToSpeechHistory(userText, aiText, conversationId, emotionAnalysis = null) {
             // Speech-to-Speech history removed - Voxtral is ASR-only
             return;
+        }
+
+        // ============================================================================
+        // WebRTC Connection Functions (AWS EC2 Optimized)
+        // ============================================================================
+
+        async function connectWebRTC() {
+            try {
+                updateStatus('Connecting via WebRTC (AWS EC2)...', 'loading');
+                log('🎯 [WebRTC] Initiating peer connection...');
+
+                // Create peer connection with STUN servers
+                peerConnection = new RTCPeerConnection({
+                    iceServers: [
+                        { urls: ['stun:stun.l.google.com:19302'] },
+                        { urls: ['stun:stun1.l.google.com:19302'] }
+                    ]
+                });
+
+                // Handle ICE candidates
+                peerConnection.onicecandidate = async (event) => {
+                    if (event.candidate) {
+                        log(`🎯 [WebRTC] Sending ICE candidate: ${event.candidate.candidate.substring(0, 50)}...`);
+
+                        try {
+                            await fetch('/webrtc/candidate', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    client_id: clientId,
+                                    candidate: {
+                                        candidate: event.candidate.candidate,
+                                        sdpMLineIndex: event.candidate.sdpMLineIndex,
+                                        sdpMid: event.candidate.sdpMid
+                                    }
+                                })
+                            });
+                        } catch (error) {
+                            log(`❌ [WebRTC] Error sending ICE candidate: ${error.message}`);
+                        }
+                    }
+                };
+
+                // Handle connection state changes
+                peerConnection.onconnectionstatechange = () => {
+                    log(`🎯 [WebRTC] Connection state: ${peerConnection.connectionState}`);
+
+                    if (peerConnection.connectionState === 'connected') {
+                        updateStatus('Connected via WebRTC! Ready to start conversation.', 'success');
+                        updateConnectionStatus(true);
+                        document.getElementById('connectBtn').disabled = true;
+                        document.getElementById('streamBtn').disabled = false;
+                    } else if (peerConnection.connectionState === 'failed' ||
+                               peerConnection.connectionState === 'disconnected') {
+                        updateStatus('WebRTC connection lost', 'error');
+                        updateConnectionStatus(false);
+                    }
+                };
+
+                // Create offer
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+
+                log('🎯 [WebRTC] Created offer, sending to server...');
+
+                // Send offer to server
+                const response = await fetch('/webrtc/offer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        type: offer.type,
+                        sdp: offer.sdp
+                    })
+                });
+
+                const data = await response.json();
+                clientId = data.client_id;
+
+                // Set remote description (answer)
+                const answer = new RTCSessionDescription(data.answer);
+                await peerConnection.setRemoteDescription(answer);
+
+                log(`🎯 [WebRTC] Connected with client ID: ${clientId}`);
+                useWebRTC = true;
+
+            } catch (error) {
+                updateStatus('WebRTC connection failed: ' + error.message, 'error');
+                log('❌ [WebRTC] Connection failed: ' + error.message);
+                console.error('WebRTC error:', error);
+                throw error;
+            }
         }
 
         async function connect() {
@@ -1540,6 +1640,116 @@ async def api_status():
             "timestamp": time.time(),
             "error": str(e),
             "integration_type": "voxtral_only"
+        }, status_code=500)
+
+# ============================================================================
+# WebRTC ENDPOINTS - AWS EC2 Optimized
+# ============================================================================
+
+@app.post("/webrtc/offer")
+async def webrtc_offer(request: Request):
+    """
+    Handle WebRTC offer from client
+    AWS EC2 optimized for low-latency peer-to-peer communication
+    """
+    try:
+        from src.streaming.webrtc_server import handle_webrtc_offer
+
+        data = await request.json()
+        client_id = str(uuid.uuid4())
+
+        # Handle WebRTC offer
+        answer = await handle_webrtc_offer(client_id, data)
+
+        streaming_logger.info(f"🎯 [WebRTC] Created answer for client {client_id}")
+
+        return JSONResponse({
+            "client_id": client_id,
+            "answer": answer,
+            "status": "success"
+        })
+
+    except Exception as e:
+        streaming_logger.error(f"❌ [WebRTC] Error handling offer: {e}")
+        return JSONResponse({
+            "status": "error",
+            "error": str(e)
+        }, status_code=500)
+
+
+@app.post("/webrtc/candidate")
+async def webrtc_candidate(request: Request):
+    """
+    Handle ICE candidate from WebRTC peer
+    """
+    try:
+        from src.streaming.webrtc_server import handle_ice_candidate
+
+        data = await request.json()
+        client_id = data.get("client_id")
+
+        if not client_id:
+            return JSONResponse({
+                "status": "error",
+                "error": "Missing client_id"
+            }, status_code=400)
+
+        # Handle ICE candidate
+        await handle_ice_candidate(client_id, data.get("candidate", {}))
+
+        return JSONResponse({"status": "success"})
+
+    except Exception as e:
+        streaming_logger.error(f"❌ [WebRTC] Error handling ICE candidate: {e}")
+        return JSONResponse({
+            "status": "error",
+            "error": str(e)
+        }, status_code=500)
+
+
+@app.get("/webrtc/stats/{client_id}")
+async def webrtc_stats(client_id: str):
+    """
+    Get WebRTC connection statistics
+    """
+    try:
+        from src.streaming.webrtc_server import get_webrtc_stats
+
+        stats = get_webrtc_stats(client_id)
+
+        return JSONResponse({
+            "client_id": client_id,
+            "stats": stats,
+            "status": "success"
+        })
+
+    except Exception as e:
+        streaming_logger.error(f"❌ [WebRTC] Error getting stats: {e}")
+        return JSONResponse({
+            "status": "error",
+            "error": str(e)
+        }, status_code=500)
+
+
+@app.post("/webrtc/close/{client_id}")
+async def webrtc_close(client_id: str):
+    """
+    Close WebRTC connection
+    """
+    try:
+        from src.streaming.webrtc_server import close_webrtc_connection
+
+        await close_webrtc_connection(client_id)
+
+        streaming_logger.info(f"🎯 [WebRTC] Closed connection for client {client_id}")
+
+        return JSONResponse({"status": "success"})
+
+    except Exception as e:
+        streaming_logger.error(f"❌ [WebRTC] Error closing connection: {e}")
+        return JSONResponse({
+            "status": "error",
+            "error": str(e)
         }, status_code=500)
 
 # WebSocket endpoint for CHUNKED STREAMING

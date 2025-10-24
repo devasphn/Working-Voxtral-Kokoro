@@ -1,11 +1,20 @@
 # Voxtral Model Configuration - VAD + ASR + LLM
-# Optimized for real-time speech processing
+# Optimized for AWS EC2 deployment with WebRTC
 
 server:
   host: "0.0.0.0"
   http_port: 8000
   health_port: 8005
   tcp_ports: []
+  # WebRTC Configuration for AWS EC2
+  webrtc:
+    enabled: true
+    stun_servers:
+      - "stun:stun.l.google.com:19302"
+      - "stun:stun1.l.google.com:19302"
+    turn_servers: []  # Optional: Add TURN servers for NAT traversal
+    ice_candidate_pool_size: 10
+    max_connections: 50
 
 model:
   name: "mistralai/Voxtral-Mini-3B-2507"
