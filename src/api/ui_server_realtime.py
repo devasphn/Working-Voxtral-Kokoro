@@ -501,14 +501,30 @@ async def home(request: Request):
 
         /**
          * Check if browser supports getUserMedia API
-         * CRITICAL: Browsers require HTTPS for microphone access (except localhost)
+         * CRITICAL: Check HTTPS requirement FIRST (before checking API existence)
+         * When accessing via HTTP on remote server, browser hides navigator.mediaDevices for security
          */
         function checkMediaDevicesSupport() {
             const hostname = window.location.hostname;
             const protocol = window.location.protocol;
 
-            // Check if navigator.mediaDevices exists
+            log(`🔍 [BROWSER CHECK] Protocol: ${protocol}, Hostname: ${hostname}`);
+
+            // CRITICAL: Check HTTPS requirement FIRST (before checking if API exists)
+            // When accessing via HTTP on remote server, browser hides navigator.mediaDevices
+            if (protocol !== 'https:' && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+                log(`⚠️ [BROWSER CHECK] HTTPS Required: Accessing via HTTP on remote server (${hostname})`);
+                return {
+                    supported: false,
+                    reason: `⚠️ HTTPS REQUIRED: Browsers require HTTPS for microphone access on remote servers.\n\nYou are accessing via HTTP (${hostname})\n\nSolutions:\n1. Set up HTTPS on AWS EC2 (recommended)\n2. Access via localhost:8000 with SSH port forwarding\n3. Use self-signed certificate for testing`,
+                    solution: 'Set up HTTPS on your AWS EC2 instance or access via localhost:8000',
+                    isHttpsIssue: true
+                };
+            }
+
+            // Now check if navigator.mediaDevices exists (safe to check after HTTPS validation)
             if (!navigator.mediaDevices) {
+                log(`❌ [BROWSER CHECK] navigator.mediaDevices not available`);
                 return {
                     supported: false,
                     reason: 'Your browser does not support the MediaDevices API',
@@ -518,6 +534,7 @@ async def home(request: Request):
 
             // Check if getUserMedia is available
             if (!navigator.mediaDevices.getUserMedia) {
+                log(`❌ [BROWSER CHECK] getUserMedia not available`);
                 return {
                     supported: false,
                     reason: 'Your browser does not support getUserMedia',
@@ -525,16 +542,7 @@ async def home(request: Request):
                 };
             }
 
-            // Check HTTPS requirement (except for localhost)
-            if (protocol !== 'https:' && hostname !== 'localhost' && hostname !== '127.0.0.1') {
-                return {
-                    supported: false,
-                    reason: `⚠️ HTTPS Required: Browsers require HTTPS for microphone access on remote servers. You are accessing via HTTP (${hostname})`,
-                    solution: 'Please set up HTTPS on your AWS EC2 instance or access via localhost:8000',
-                    isHttpsIssue: true
-                };
-            }
-
+            log(`✅ [BROWSER CHECK] MediaDevices API is available`);
             return {
                 supported: true,
                 reason: 'MediaDevices API is available'

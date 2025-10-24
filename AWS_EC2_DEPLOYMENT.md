@@ -203,6 +203,20 @@ nvidia-smi
 
 **⚠️ CRITICAL**: Browsers require HTTPS for microphone access on remote servers (except localhost).
 
+### Quick Start: Test with Localhost (Fastest)
+
+If you want to test immediately without setting up HTTPS:
+
+```bash
+# On your local machine, SSH with port forwarding
+ssh -i your-key.pem -L 8000:localhost:8000 ubuntu@98.89.99.129
+
+# Then access via browser
+http://localhost:8000/
+
+# Microphone will work (localhost is allowed over HTTP)
+```
+
 ### Option A: Using Let's Encrypt (Recommended - Free)
 
 ```bash
@@ -418,12 +432,13 @@ curl -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" \
 3. Check server logs: `tail -f logs/voxtral_streaming.log`
 4. Should see: `[CONVERSATION] Client connected: 98.83.35.212:xxxxx`
 
-### getUserMedia Error: "Cannot read properties of undefined (reading 'getUserMedia')"
+### Microphone Access Errors: "MediaDevices API not supported" or "getUserMedia undefined"
 
 **Root Cause**: Browsers require HTTPS for microphone access on remote servers (except localhost).
 
-**Error Details**:
+**Error Details** (you may see one of these):
 ```
+❌ Microphone Access Error: Your browser does not support the MediaDevices API
 TypeError: Cannot read properties of undefined (reading 'getUserMedia')
     at startConversation ((index):1266:60)
 ```
@@ -431,8 +446,11 @@ TypeError: Cannot read properties of undefined (reading 'getUserMedia')
 **Why This Happens**:
 1. You're accessing via HTTP (e.g., `http://98.89.99.129:8000/`)
 2. Browsers block microphone access over HTTP for security reasons
-3. Exception: localhost and 127.0.0.1 are allowed over HTTP
-4. `navigator.mediaDevices` is undefined when accessed over HTTP
+3. When accessing via HTTP on remote server, browser HIDES `navigator.mediaDevices` API
+4. This makes it appear as if the browser doesn't support the API
+5. Exception: localhost and 127.0.0.1 are allowed over HTTP (API is available)
+
+**Key Insight**: The error "MediaDevices API not supported" when accessing via HTTP on remote server actually means "HTTPS Required", not "browser incompatible"
 
 **Solutions** (in order of preference):
 
