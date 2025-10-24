@@ -585,24 +585,31 @@ async def home(request: Request):
         }
         
         // Detect environment and construct WebSocket URL
+        // CRITICAL FIX: Include port number in WebSocket URL for all deployments
         function detectEnvironment() {
             const hostname = window.location.hostname;
             const protocol = window.location.protocol;
-            
+            const port = window.location.port;
+
             if (hostname.includes('proxy.runpod.net')) {
+                // RunPod: Use wss:// for HTTPS proxy
                 const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
                 wsUrl = `${wsProtocol}//${hostname}/ws`;
                 document.getElementById('envInfo') && (document.getElementById('envInfo').textContent = 'RunPod Cloud (HTTP Proxy)');
             } else if (hostname === 'localhost' || hostname === '127.0.0.1') {
+                // Local development: Always use port 8000
                 wsUrl = `ws://${hostname}:8000/ws`;
                 document.getElementById('envInfo') && (document.getElementById('envInfo').textContent = 'Local Development');
             } else {
+                // AWS EC2 or custom deployment: Include port in URL
                 const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:';
-                wsUrl = `${wsProtocol}//${hostname}/ws`;
-                document.getElementById('envInfo') && (document.getElementById('envInfo').textContent = 'Custom Deployment');
+                const portStr = port ? `:${port}` : ':8000';  // Default to 8000 if no port specified
+                wsUrl = `${wsProtocol}//${hostname}${portStr}/ws`;
+                document.getElementById('envInfo') && (document.getElementById('envInfo').textContent = 'AWS EC2 / Custom Deployment');
             }
-            
-            log(`WebSocket URL detected: ${wsUrl}`);
+
+            log(`🎯 [WEBSOCKET] URL detected: ${wsUrl}`);
+            log(`🎯 [WEBSOCKET] Hostname: ${hostname}, Port: ${port || '(default)'}, Protocol: ${protocol}`);
         }
         
         function updateStatus(message, type = 'info') {

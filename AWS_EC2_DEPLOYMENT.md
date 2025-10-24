@@ -32,18 +32,20 @@
 
 ## 3. SECURITY GROUP CONFIGURATION
 
-### Inbound Rules:
+### Inbound Rules (CRITICAL - Must be configured):
 ```
 Protocol | Port/Range      | Source        | Purpose
 ---------|-----------------|---------------|------------------
 TCP      | 22              | Your IP/0.0.0 | SSH access
 TCP      | 80              | 0.0.0.0/0     | HTTP (redirect to HTTPS)
 TCP      | 443             | 0.0.0.0/0     | HTTPS (WebRTC signaling)
+TCP      | 8000            | 0.0.0.0/0     | FastAPI WebSocket/HTTP (CRITICAL)
 TCP      | 3000-3100       | 0.0.0.0/0     | WebRTC data channels
 UDP      | 3000-3100       | 0.0.0.0/0     | WebRTC media (RTP/RTCP)
-TCP      | 8000            | 0.0.0.0/0     | FastAPI (internal)
 UDP      | 5000-6000       | 0.0.0.0/0     | STUN/TURN (optional)
 ```
+
+**⚠️ CRITICAL**: Port 8000 MUST be open for WebSocket connections. If this port is not open, you will get WebSocket error 1006 (abnormal closure).
 
 ### Outbound Rules:
 ```
@@ -271,6 +273,42 @@ lspci | grep -i nvidia  # Should list GPU
 # Reduce max_memory_per_gpu in config.yaml
 # Or use smaller model variant
 ```
+
+### WebSocket Error 1006 (Abnormal Closure)
+
+**Root Cause**: WebSocket connection fails without proper handshake. Usually caused by:
+1. Port 8000 not open in Security Group
+2. WebSocket URL missing port number
+3. Server not listening on 0.0.0.0
+
+**Fix**:
+```bash
+# 1. Verify Security Group allows port 8000
+# Go to AWS Console > EC2 > Security Groups > Select your group
+# Add inbound rule: TCP 8000 from 0.0.0.0/0
+
+# 2. Verify server is running and listening
+sudo netstat -tlnp | grep 8000
+# Should show: tcp  0  0 0.0.0.0:8000  0.0.0.0:*  LISTEN
+
+# 3. Test WebSocket connection from EC2
+curl -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Key: SGVsbG8sIHdvcmxkIQ==" \
+  -H "Sec-WebSocket-Version: 13" \
+  http://localhost:8000/ws
+
+# 4. Test from external machine
+curl -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Key: SGVsbG8sIHdvcmxkIQ==" \
+  -H "Sec-WebSocket-Version: 13" \
+  http://98.83.35.212:8000/ws
+```
+
+**Verification**:
+1. Open browser console (F12)
+2. Check WebSocket URL: Should be `ws://98.83.35.212:8000/ws` (with port)
+3. Check server logs: `tail -f logs/voxtral_streaming.log`
+4. Should see: `[CONVERSATION] Client connected: 98.83.35.212:xxxxx`
 
 ### WebRTC Connection Issues
 - Check Security Group rules
