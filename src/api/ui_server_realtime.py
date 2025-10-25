@@ -26,6 +26,8 @@ if project_root not in sys.path:
 
 from src.utils.config import config
 from src.utils.logging_config import logger
+from src.managers.conversation_manager import ConversationManager
+from src.models.tts_manager import TTSManager
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -42,6 +44,20 @@ streaming_logger.setLevel(logging.DEBUG)
 _unified_manager = None
 _audio_processor = None
 _performance_monitor = None
+_tts_manager = None
+
+# PHASE 1: Initialize conversation manager for context-aware responses
+conversation_manager = ConversationManager(context_window=5, max_history=100)
+streaming_logger.info("✅ Conversation manager initialized (context_window=5, max_history=100)")
+
+# PHASE 2: Initialize TTS manager for voice output
+def get_tts_manager():
+    """Get or initialize TTS manager instance"""
+    global _tts_manager
+    if _tts_manager is None:
+        _tts_manager = TTSManager(model_name="chatterbox", device="cuda")
+        streaming_logger.info("✅ TTS manager initialized")
+    return _tts_manager
 
 # Response deduplication tracking
 recent_responses = {}  # client_id -> last_response_text
@@ -400,8 +416,58 @@ async def home(request: Request):
             </div>
         </div>
 
+        <!-- PHASE 4: Audio Playback Controls -->
+        <div style="text-align: center; padding: 15px; background: rgba(255, 255, 255, 0.1); border-radius: 10px; margin-bottom: 20px;">
+            <strong>🔊 Audio Playback Controls</strong>
+            <div style="margin: 10px 0; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap;">
+                <button id="audioPlayBtn" class="stream-btn" onclick="toggleAudioPlayback()" style="min-width: 100px;">▶️ Play</button>
+                <button id="audioPauseBtn" class="stop-btn" onclick="pauseAudioPlayback()" style="min-width: 100px;" disabled>⏸️ Pause</button>
+                <label style="display: flex; align-items: center; gap: 10px; background: rgba(255, 255, 255, 0.1); padding: 8px 15px; border-radius: 10px;">
+                    <span>🔊 Volume:</span>
+                    <input type="range" id="volumeControl" min="0" max="100" value="100" onchange="setAudioVolume(this.value)" style="width: 100px;">
+                    <span id="volumeValue">100%</span>
+                </label>
+            </div>
+            <div style="margin-top: 10px; font-size: 0.9em; opacity: 0.8;">
+                <span>🎵 Queue: <span id="audioQueueLength">0</span> chunks | </span>
+                <span>Status: <span id="audioPlaybackStatus">Ready</span></span>
+            </div>
+        </div>
 
-        
+        <!-- PHASE 5: Language Selection -->
+        <div style="text-align: center; padding: 15px; background: rgba(255, 255, 255, 0.1); border-radius: 10px; margin-bottom: 20px;">
+            <strong>🌍 Language Selection</strong>
+            <div style="margin: 10px 0; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; align-items: center;">
+                <label style="display: flex; align-items: center; gap: 8px;">
+                    <span>🗣️ Language:</span>
+                    <select id="languageSelect" onchange="setLanguage(this.value)" style="padding: 8px 12px; border-radius: 8px; font-size: 14px;">
+                        <option value="en">English (en)</option>
+                        <option value="hi">Hindi (hi)</option>
+                        <option value="es">Spanish (es)</option>
+                        <option value="fr">French (fr)</option>
+                        <option value="de">German (de)</option>
+                        <option value="it">Italian (it)</option>
+                        <option value="pt">Portuguese (pt)</option>
+                        <option value="ja">Japanese (ja)</option>
+                        <option value="ko">Korean (ko)</option>
+                        <option value="zh">Chinese (zh)</option>
+                        <option value="ms">Malaysian (ms)</option>
+                        <option value="ta">Tamil (ta)</option>
+                        <option value="te">Telugu (te)</option>
+                        <option value="mr">Marathi (mr)</option>
+                        <option value="kn">Kannada (kn)</option>
+                        <option value="ml">Malayalam (ml)</option>
+                        <option value="bn">Bengali (bn)</option>
+                    </select>
+                </label>
+            </div>
+            <div style="margin-top: 10px; font-size: 0.9em; opacity: 0.8;">
+                <span>Current: <span id="currentLanguage">English</span> | </span>
+                <span>Model: <span id="currentModel">Chatterbox</span></span>
+            </div>
+        </div>
+
+
         <div class="volume-meter">
             <div class="volume-bar" id="volumeBar"></div>
         </div>
@@ -463,7 +529,8 @@ async def home(request: Request):
         let ws = null;
         let peerConnection = null;
         let clientId = null;
-        let useWebRTC = false;  // Toggle between WebSocket and WebRTC
+        // PHASE 6: Enable WebRTC for lower latency audio streaming
+        let useWebRTC = true;  // Toggle between WebSocket and WebRTC (PHASE 6: Changed to true)
 
         let audioContext = null;
         let mediaStream = null;
@@ -494,6 +561,48 @@ async def home(request: Request):
 
         // Mode variables (Voxtral ASR-only)
         let currentMode = 'transcribe';
+
+        // PHASE 5: Language support variables
+        let currentLanguage = 'en';
+        const LANGUAGE_NAMES = {
+            'en': 'English',
+            'hi': 'Hindi',
+            'es': 'Spanish',
+            'fr': 'French',
+            'de': 'German',
+            'it': 'Italian',
+            'pt': 'Portuguese',
+            'ja': 'Japanese',
+            'ko': 'Korean',
+            'zh': 'Chinese',
+            'ms': 'Malaysian',
+            'ta': 'Tamil',
+            'te': 'Telugu',
+            'mr': 'Marathi',
+            'kn': 'Kannada',
+            'ml': 'Malayalam',
+            'bn': 'Bengali'
+        };
+
+        const LANGUAGE_MODELS = {
+            'en': 'Chatterbox',
+            'hi': 'Chatterbox',
+            'es': 'Chatterbox',
+            'fr': 'Chatterbox',
+            'de': 'Chatterbox',
+            'it': 'Chatterbox',
+            'pt': 'Chatterbox',
+            'ja': 'Chatterbox',
+            'ko': 'Chatterbox',
+            'zh': 'Chatterbox',
+            'ms': 'Dia-TTS',
+            'ta': 'Indic-TTS',
+            'te': 'Indic-TTS',
+            'mr': 'Indic-TTS',
+            'kn': 'Indic-TTS',
+            'ml': 'Indic-TTS',
+            'bn': 'Indic-TTS'
+        };
 
         // ============================================================================
         // Browser Compatibility & Feature Detection
@@ -859,8 +968,20 @@ async def home(request: Request):
                     };
                     
                     ws.onmessage = (event) => {
-                        const data = JSON.parse(event.data);
-                        handleWebSocketMessage(data);
+                        // PHASE 4: Handle both JSON and binary audio messages
+                        if (event.data instanceof ArrayBuffer) {
+                            // Binary audio data from Phase 3 streaming
+                            log('🎵 [PHASE 4] Received binary audio chunk (ArrayBuffer)');
+                            handleAudioChunkBinary(event.data);
+                        } else if (event.data instanceof Blob) {
+                            // Binary audio data as Blob
+                            log('🎵 [PHASE 4] Received binary audio chunk (Blob)');
+                            handleAudioChunkBinary(event.data);
+                        } else {
+                            // JSON text messages
+                            const data = JSON.parse(event.data);
+                            handleWebSocketMessage(data);
+                        }
                     };
                     
                     ws.onclose = (event) => {
@@ -1004,6 +1125,122 @@ async def home(request: Request):
             return responseDiv;
         }
 
+        // PHASE 4: Handle binary audio chunks from WebSocket
+        async function handleAudioChunkBinary(audioData) {
+            try {
+                // Convert Blob to ArrayBuffer if needed
+                let arrayBuffer = audioData;
+                if (audioData instanceof Blob) {
+                    arrayBuffer = await audioData.arrayBuffer();
+                }
+
+                log(`🎵 [PHASE 4] Queuing binary audio chunk (${arrayBuffer.byteLength} bytes)`);
+
+                // Add to audio queue
+                audioQueue.push({
+                    chunkId: audioQueue.length,
+                    audioBuffer: arrayBuffer,
+                    metadata: { size: arrayBuffer.byteLength },
+                    voice: 'tts'
+                });
+
+                log(`🎵 [PHASE 4] Audio queue length: ${audioQueue.length}`);
+
+                // Start processing queue if not already playing
+                if (!isPlayingAudio) {
+                    processAudioQueuePhase4();
+                }
+
+            } catch (error) {
+                log(`❌ [PHASE 4] Error handling binary audio chunk: ${error}`);
+                console.error('Binary audio handling error:', error);
+            }
+        }
+
+        // PHASE 4: Process audio queue with Web Audio API
+        async function processAudioQueuePhase4() {
+            if (isPlayingAudio || audioQueue.length === 0) {
+                return;
+            }
+
+            isPlayingAudio = true;
+            updateAudioQueueDisplay();
+
+            while (audioQueue.length > 0) {
+                const audioItem = audioQueue.shift();
+                updateAudioQueueDisplay();
+
+                try {
+                    log(`🎵 [PHASE 4] Playing audio chunk ${audioItem.chunkId}`);
+                    await playAudioItemPhase4(audioItem);
+                    log(`✅ [PHASE 4] Completed playing audio chunk ${audioItem.chunkId}`);
+                } catch (error) {
+                    log(`❌ [PHASE 4] Error playing audio chunk ${audioItem.chunkId}: ${error}`);
+                    console.error('Audio playback error:', error);
+                }
+
+                // Small delay between chunks to prevent overlap
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+
+            isPlayingAudio = false;
+            updateAudioQueueDisplay();
+            log('🎵 [PHASE 4] Audio queue processing completed');
+        }
+
+        // PHASE 4: Play individual audio item using Web Audio API
+        function playAudioItemPhase4(audioItem) {
+            return new Promise((resolve, reject) => {
+                try {
+                    // Initialize audio context if needed
+                    if (!audioContext) {
+                        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    }
+
+                    // Resume context if suspended
+                    if (audioContext.state === 'suspended') {
+                        audioContext.resume().then(() => {
+                            playAudioBuffer(audioItem, resolve, reject);
+                        }).catch(reject);
+                    } else {
+                        playAudioBuffer(audioItem, resolve, reject);
+                    }
+                } catch (error) {
+                    reject(error);
+                }
+            });
+        }
+
+        // PHASE 4: Decode and play audio buffer
+        function playAudioBuffer(audioItem, resolve, reject) {
+            try {
+                audioContext.decodeAudioData(
+                    audioItem.audioBuffer,
+                    (decodedBuffer) => {
+                        log(`🎵 [PHASE 4] Decoded audio buffer: ${decodedBuffer.duration.toFixed(2)}s`);
+
+                        const source = audioContext.createBufferSource();
+                        source.buffer = decodedBuffer;
+                        source.connect(audioContext.destination);
+
+                        source.onended = () => {
+                            log(`✅ [PHASE 4] Audio chunk ${audioItem.chunkId} finished playing`);
+                            resolve();
+                        };
+
+                        source.start(0);
+                        log(`🎵 [PHASE 4] Started playing audio chunk ${audioItem.chunkId}`);
+                    },
+                    (error) => {
+                        log(`❌ [PHASE 4] Failed to decode audio: ${error}`);
+                        reject(error);
+                    }
+                );
+            } catch (error) {
+                reject(error);
+            }
+        }
+
         // ADDED: Play audio chunks with proper error handling
         async function playAudioChunk(data) {
             try {
@@ -1025,12 +1262,12 @@ async def home(request: Request):
                 const source = audioContext.createBufferSource();
                 source.buffer = audioBuffer;
                 source.connect(audioContext.destination);
-                
+
                 source.onended = () => {
                     log('✅ Audio played successfully');
                     // Don't reset here - let the text response handle it
                 };
-                
+
                 source.start();
             } catch (error) {
                 console.error('Audio playback error:', error);
@@ -1360,9 +1597,102 @@ async def home(request: Request):
             isPlayingChunks = false;
             log('🎵 All audio chunks played');
         }
-        
 
-        
+        // PHASE 4: Audio playback control functions
+        let audioPlaybackPaused = false;
+        let audioPlaybackGain = null;
+
+        function toggleAudioPlayback() {
+            if (audioPlaybackPaused) {
+                resumeAudioPlayback();
+            } else {
+                pauseAudioPlayback();
+            }
+        }
+
+        function pauseAudioPlayback() {
+            if (audioContext && audioContext.state === 'running') {
+                audioContext.suspend();
+                audioPlaybackPaused = true;
+                document.getElementById('audioPlayBtn').disabled = true;
+                document.getElementById('audioPauseBtn').disabled = false;
+                document.getElementById('audioPlaybackStatus').textContent = 'Paused';
+                log('⏸️ [PHASE 4] Audio playback paused');
+                updateStatus('Audio playback paused', 'info');
+            }
+        }
+
+        function resumeAudioPlayback() {
+            if (audioContext && audioContext.state === 'suspended') {
+                audioContext.resume();
+                audioPlaybackPaused = false;
+                document.getElementById('audioPlayBtn').disabled = false;
+                document.getElementById('audioPauseBtn').disabled = true;
+                document.getElementById('audioPlaybackStatus').textContent = 'Playing';
+                log('▶️ [PHASE 4] Audio playback resumed');
+                updateStatus('Audio playback resumed', 'success');
+            }
+        }
+
+        function setAudioVolume(value) {
+            const volumePercent = parseInt(value);
+            document.getElementById('volumeValue').textContent = volumePercent + '%';
+
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+
+            // Create gain node if not exists
+            if (!audioPlaybackGain) {
+                audioPlaybackGain = audioContext.createGain();
+                audioPlaybackGain.connect(audioContext.destination);
+            }
+
+            // Set volume (0.0 to 1.0)
+            audioPlaybackGain.gain.value = volumePercent / 100;
+            log(`🔊 [PHASE 4] Volume set to ${volumePercent}%`);
+        }
+
+        function updateAudioQueueDisplay() {
+            document.getElementById('audioQueueLength').textContent = audioQueue.length;
+            if (isPlayingAudio) {
+                document.getElementById('audioPlaybackStatus').textContent = 'Playing (' + audioQueue.length + ' queued)';
+            } else if (audioQueue.length > 0) {
+                document.getElementById('audioPlaybackStatus').textContent = 'Queued (' + audioQueue.length + ' chunks)';
+            } else {
+                document.getElementById('audioPlaybackStatus').textContent = 'Ready';
+            }
+        }
+
+        // PHASE 5: Language support functions
+        function setLanguage(languageCode) {
+            currentLanguage = languageCode;
+            const languageName = LANGUAGE_NAMES[languageCode] || 'Unknown';
+            const modelName = LANGUAGE_MODELS[languageCode] || 'Unknown';
+
+            document.getElementById('currentLanguage').textContent = languageName;
+            document.getElementById('currentModel').textContent = modelName;
+
+            log(`🌍 [PHASE 5] Language changed to ${languageName} (${languageCode}) using ${modelName}`);
+            updateStatus(`Language set to ${languageName}`, 'success');
+        }
+
+        function getLanguage() {
+            return currentLanguage;
+        }
+
+        function getSupportedLanguages() {
+            return Object.keys(LANGUAGE_NAMES);
+        }
+
+        function getLanguageName(code) {
+            return LANGUAGE_NAMES[code] || 'Unknown';
+        }
+
+        function getLanguageModel(code) {
+            return LANGUAGE_MODELS[code] || 'Unknown';
+        }
+
         async function startConversation() {
             // CRITICAL: Reset VAD state variables for fresh conversation
             continuousAudioBuffer = [];
@@ -1634,17 +1964,19 @@ async def home(request: Request):
             try {
                 const base64Audio = arrayBufferToBase64(audioData.buffer);
 
+                // PHASE 5: Include language parameter in message
                 const message = {
                     type: 'audio_chunk',
                     audio_data: base64Audio,
                     mode: 'transcribe',
                     prompt: '',
                     chunk_id: chunkCounter++,
-                    timestamp: Date.now()
+                    timestamp: Date.now(),
+                    language: getLanguage()  // PHASE 5: Add language parameter
                 };
-                
+
                 ws.send(JSON.stringify(message));
-                log(`Sent audio chunk ${chunkCounter} (${audioData.length} samples)`);
+                log(`Sent audio chunk ${chunkCounter} (${audioData.length} samples, language=${getLanguage()})`);
                 
             } catch (error) {
                 log('Error sending audio chunk: ' + error.message);
@@ -1876,7 +2208,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 
                 if message_type == "audio_chunk":
                     chunk_id = message.get("chunk_id", int(time.time() * 1000))
-                    streaming_logger.debug(f"[CHUNKED] Processing chunk {chunk_id} for {client_id}")
+                    # PHASE 5: Get language from message, default to English
+                    language = message.get("language", "en")
+                    streaming_logger.debug(f"[CHUNKED] Processing chunk {chunk_id} for {client_id} (language={language})")
 
                     # Decode audio data with improved quality handling
                     try:
@@ -1906,10 +2240,18 @@ async def websocket_endpoint(websocket: WebSocket):
                         first_chunk_time = None
                         chunk_times = []
 
+                        # PHASE 1: Track full response for conversation manager
+                        full_response = ""
+
+                        # PHASE 1: Get conversation context for context-aware responses
+                        conversation_context = conversation_manager.get_context()
+                        streaming_logger.debug(f"📝 [PHASE 1] Conversation context: {len(conversation_context)} chars, {len(conversation_manager.history)} turns")
+
                         # Use CHUNKED STREAMING method
+                        # PHASE 5: Pass language parameter for multi-language support
                         chunk_counter = 0
                         async for text_chunk in unified_manager.voxtral_model.process_realtime_chunk_streaming(
-                            audio_data, chunk_id, mode="conversation"
+                            audio_data, chunk_id, mode="conversation", conversation_context=conversation_context, language=language
                         ):
                             if text_chunk['success'] and text_chunk['text'].strip():
                                 # Track first chunk latency
@@ -1920,21 +2262,61 @@ async def websocket_endpoint(websocket: WebSocket):
                                 chunk_time = time.time() - processing_start_time
                                 chunk_times.append(chunk_time)
 
+                                # PHASE 1: Accumulate response text
+                                full_response += text_chunk['text'] + " "
+
                                 # Send text chunk immediately
+                                # PHASE 3: Send text chunk with audio metadata
                                 await websocket.send_json({
                                     "type": "text_chunk",
                                     "chunk_id": f"{chunk_id}_{chunk_counter}",
                                     "text": text_chunk['text'],
+                                    "has_audio": text_chunk.get('audio') is not None,  # PHASE 3
                                     "is_final": text_chunk.get('is_final', False),
                                     "processing_time_ms": int(chunk_time * 1000)
                                 })
                                 streaming_logger.debug(f"📤 Text chunk {chunk_counter}: '{text_chunk['text']}' ({int(chunk_time*1000)}ms)")
+
+                                # PHASE 3: Send audio bytes separately if available
+                                if text_chunk.get('audio'):
+                                    try:
+                                        await websocket.send_bytes(text_chunk['audio'])
+                                        streaming_logger.debug(f"🎵 [PHASE 3] Sent {len(text_chunk['audio'])} bytes of audio for chunk {chunk_counter}")
+                                    except Exception as e:
+                                        streaming_logger.warning(f"⚠️ [PHASE 3] Failed to send audio chunk: {e}")
+
                                 chunk_counter += 1
 
                         # Calculate total latency and profiling metrics
                         total_latency_ms = int((time.time() - processing_start_time) * 1000)
                         avg_chunk_time = int(np.mean(chunk_times) * 1000) if chunk_times else 0
                         streaming_logger.info(f"✅ CHUNKED STREAMING complete for {chunk_id}: {chunk_counter} chunks in {total_latency_ms}ms (avg chunk: {avg_chunk_time}ms, first: {int(first_chunk_time*1000) if first_chunk_time else 0}ms)")
+
+                        # PHASE 1: Add user and assistant messages to conversation manager
+                        # Note: In a full implementation, we would transcribe the audio to get the actual user message
+                        # For now, we add a placeholder user message
+                        if full_response.strip():
+                            # Add user message (placeholder - would be transcribed audio in full implementation)
+                            user_message = f"[Audio input - {len(audio_data)} samples]"
+                            conversation_manager.add_turn(
+                                "user",
+                                user_message,
+                                metadata={"chunk_id": chunk_id, "audio_samples": len(audio_data)}
+                            )
+                            streaming_logger.debug(f"📝 [PHASE 1] Added user message to conversation")
+
+                            # Add assistant response
+                            conversation_manager.add_turn(
+                                "assistant",
+                                full_response.strip(),
+                                latency_ms=total_latency_ms,
+                                metadata={"chunk_id": chunk_id, "chunks": chunk_counter}
+                            )
+                            streaming_logger.info(f"📝 [PHASE 1] Added assistant response to conversation (latency: {total_latency_ms}ms)")
+
+                            # Log conversation summary
+                            summary = conversation_manager.get_history_summary()
+                            streaming_logger.info(f"📊 [PHASE 1] Conversation summary: {summary['total_turns']} turns, {summary['total_characters']} chars")
 
                         # CRITICAL FIX: Send conversation_complete message to reset VAD state
                         # This allows the frontend to call resetForNextInput() and enable continuous streaming
@@ -1974,6 +2356,86 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         streaming_logger.info(f"[CONVERSATION] Connection closed: {client_id}")
 
+
+# PHASE 2: TTS WebSocket endpoint for text-to-speech
+@app.websocket("/ws/tts")
+async def websocket_tts(websocket: WebSocket):
+    """TTS streaming endpoint for converting text to speech"""
+    await websocket.accept()
+    client_id = f"{websocket.client.host}:{websocket.client.port}"
+    streaming_logger.info(f"🎵 [TTS] Client connected: {client_id}")
+
+    try:
+        tts_manager = get_tts_manager()
+
+        if not tts_manager.is_initialized:
+            streaming_logger.warning("⚠️ [TTS] TTS manager not initialized, using fallback mode")
+
+        await websocket.send_json({
+            "type": "connection",
+            "message": "Connected to TTS service",
+            "tts_available": tts_manager.is_initialized
+        })
+
+        while True:
+            try:
+                # Receive TTS request
+                message = await websocket.receive_json()
+                message_type = message.get("type")
+
+                if message_type == "synthesize":
+                    text = message.get("text", "")
+                    language = message.get("language", "en")
+                    emotion = message.get("emotion", "neutral")
+                    chunk_id = message.get("chunk_id", "tts_chunk")
+
+                    if not text:
+                        streaming_logger.warning("⚠️ [TTS] Empty text provided")
+                        continue
+
+                    streaming_logger.debug(f"🎵 [TTS] Synthesizing: '{text[:50]}...' (lang={language})")
+
+                    # Synthesize text to speech
+                    audio_bytes = await tts_manager.synthesize(text, language, emotion)
+
+                    if audio_bytes:
+                        # Send audio as binary data
+                        await websocket.send_bytes(audio_bytes)
+                        streaming_logger.debug(f"🎵 [TTS] Sent {len(audio_bytes)} bytes of audio for chunk {chunk_id}")
+                    else:
+                        # Send error message
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "TTS synthesis failed",
+                            "chunk_id": chunk_id
+                        })
+                        streaming_logger.warning(f"⚠️ [TTS] Synthesis failed for chunk {chunk_id}")
+
+                elif message_type == "ping":
+                    await websocket.send_json({
+                        "type": "pong",
+                        "timestamp": time.time()
+                    })
+
+                else:
+                    streaming_logger.warning(f"⚠️ [TTS] Unknown message type: {message_type}")
+
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                streaming_logger.error(f"❌ [TTS] Error: {e}")
+                try:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": str(e)
+                    })
+                except:
+                    break
+
+    except Exception as e:
+        streaming_logger.error(f"❌ [TTS] Connection error: {e}")
+    finally:
+        streaming_logger.info(f"🎵 [TTS] Client disconnected: {client_id}")
 
 
 async def initialize_models_at_startup():

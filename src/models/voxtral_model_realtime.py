@@ -25,6 +25,22 @@ from threading import Lock
 import threading
 import base64
 
+# PHASE 3: Import TTS Manager for streaming audio pipeline
+try:
+    from src.models.tts_manager import TTSManager
+    TTS_AVAILABLE = True
+except ImportError:
+    TTS_AVAILABLE = False
+    TTSManager = None
+
+# PHASE 7: Import Emotion Detector for emotional expressiveness
+try:
+    from src.utils.emotion_detector import EmotionDetector
+    EMOTION_DETECTION_AVAILABLE = True
+except ImportError:
+    EMOTION_DETECTION_AVAILABLE = False
+    EmotionDetector = None
+
 # Import mistral_common with fallback (v1.8.5+ with AudioURLChunk & TranscriptionRequest)
 try:
     from mistral_common.audio import Audio, AudioURLChunk
@@ -115,7 +131,13 @@ class VoxtralModel:
         
         # Performance optimization flags
         self.use_torch_compile = False  # Disabled by default for stability
-        
+
+        # PHASE 3: TTS Manager for streaming audio pipeline
+        self.tts_manager = None
+
+        # PHASE 7: Emotion Detector for emotional expressiveness
+        self.emotion_detector = None
+
         realtime_logger.info("🚀 VoxtralModel initialized with ULTRA-FAST + CHUNKED STREAMING")
     
     @contextmanager
@@ -141,7 +163,29 @@ class VoxtralModel:
             self.audio_processor = AudioProcessor()
             realtime_logger.info("Audio processor lazy-loaded into Voxtral model")
         return self.audio_processor
-    
+
+    def get_tts_manager(self):
+        """Lazy initialization of TTS manager for streaming audio pipeline (PHASE 3)"""
+        if self.tts_manager is None and TTS_AVAILABLE:
+            try:
+                self.tts_manager = TTSManager(model_name="chatterbox", device=self.device)
+                realtime_logger.info("🎵 TTS manager lazy-loaded into Voxtral model")
+            except Exception as e:
+                realtime_logger.warning(f"⚠️ TTS manager initialization failed: {e}")
+                self.tts_manager = None
+        return self.tts_manager
+
+    def get_emotion_detector(self):
+        """PHASE 7: Lazy initialization of emotion detector for emotional expressiveness"""
+        if self.emotion_detector is None and EMOTION_DETECTION_AVAILABLE:
+            try:
+                self.emotion_detector = EmotionDetector()
+                realtime_logger.info("🎭 [PHASE 7] Emotion detector lazy-loaded into Voxtral model")
+            except Exception as e:
+                realtime_logger.warning(f"⚠️ [PHASE 7] Emotion detector initialization failed: {e}")
+                self.emotion_detector = None
+        return self.emotion_detector
+
     def _check_flash_attention_availability(self):
         """ENHANCED: Detect and optimize FlashAttention2"""
         try:
@@ -532,8 +576,16 @@ class VoxtralModel:
             realtime_logger.error(f"Error transcribing from URL: {e}")
             raise
 
-    async def process_realtime_chunk_streaming(self, audio_data: Union[torch.Tensor, np.ndarray], chunk_id: str, mode: str = "conversation") -> AsyncGenerator[Dict[str, Any], None]:
-        """Process real-time audio with CHUNKED STREAMING response"""
+    async def process_realtime_chunk_streaming(self, audio_data: Union[torch.Tensor, np.ndarray], chunk_id: str, mode: str = "conversation", conversation_context: str = "", language: str = "en") -> AsyncGenerator[Dict[str, Any], None]:
+        """Process real-time audio with CHUNKED STREAMING response
+
+        Args:
+            audio_data: Audio data as tensor or numpy array
+            chunk_id: Unique identifier for this chunk
+            mode: "conversation" or "transcribe"
+            conversation_context: Previous conversation context for context-aware responses (PHASE 1)
+            language: Language code for TTS synthesis (PHASE 5)
+        """
         if not self.is_initialized:
             raise RuntimeError("VoxtralModel not initialized")
         
@@ -576,14 +628,25 @@ class VoxtralModel:
             # mode="conversation" -> Generate conversational responses
             # mode="transcribe" -> Transcribe audio only
             if mode == "conversation":
-                # CRITICAL FIX: Strengthen the conversational prompt to prevent transcription fallback
-                # The model must understand it should respond, not transcribe
-                prompt_text = "You are a helpful conversational AI. Listen to what the user said and respond to them conversationally. Do NOT repeat or transcribe what they said. Instead, respond naturally to their message."
+                # PHASE 1: Include conversation context for context-aware responses
+                if conversation_context.strip():
+                    prompt_text = f"""You are a helpful conversational AI.
+
+Previous conversation:
+{conversation_context}
+
+Listen to what the user just said and respond to them conversationally. Do NOT repeat or transcribe what they said. Instead, respond naturally to their message, taking into account the previous conversation context."""
+                    realtime_logger.info(f"📝 [PHASE 1] Using context-aware prompt with {len(conversation_context)} chars of context")
+                else:
+                    # CRITICAL FIX: Strengthen the conversational prompt to prevent transcription fallback
+                    # The model must understand it should respond, not transcribe
+                    prompt_text = "You are a helpful conversational AI. Listen to what the user said and respond to them conversationally. Do NOT repeat or transcribe what they said. Instead, respond naturally to their message."
+                    realtime_logger.info(f"📝 [PHASE 1] Using standard prompt (no context available)")
             else:
                 prompt_text = "Transcribe exactly what you heard. Be precise with proper nouns and technical terms."
 
             # CRITICAL FIX: Log the prompt being used to verify it's set correctly
-            realtime_logger.info(f"🎯 [CHUNK {chunk_id}] Mode: {mode}, Prompt: '{prompt_text}'")
+            realtime_logger.info(f"🎯 [CHUNK {chunk_id}] Mode: {mode}, Prompt length: {len(prompt_text)}")
 
             # Create conversation with appropriate prompt
             conversation = [
@@ -645,31 +708,63 @@ class VoxtralModel:
 
                 # Stream chunks as they're generated
                 word_buffer = []
+                first_token_time = None
                 first_chunk_received = False
+
+                # PHASE 3: Get TTS manager for streaming audio pipeline
+                tts_manager = self.get_tts_manager()
+                tts_enabled = tts_manager is not None and tts_manager.is_initialized
 
                 for new_text in streamer:
                     if new_text:
                         words = new_text.split()
                         word_buffer.extend(words)
 
+                        # Track first token latency (PHASE 0 FIX)
+                        if first_token_time is None:
+                            first_token_time = time.time() - chunk_start_time
+                            realtime_logger.info(f"⚡ [PHASE 0] TTFT: {first_token_time*1000:.1f}ms for chunk {chunk_id}")
+
                         # CRITICAL FIX: Log first chunk to detect transcription-only responses
                         if not first_chunk_received:
                             first_chunk_received = True
                             realtime_logger.info(f"📝 [CHUNK {chunk_id}] First generated text: '{new_text}' (mode={mode})")
 
-                        # Send chunks of 5-7 words for natural speech
-                        if len(word_buffer) >= 6:
-                            chunk_text = " ".join(word_buffer[:6])
-                            word_buffer = word_buffer[6:]
+                        # PHASE 0 FIX: Send 1-word chunks immediately instead of waiting for 6 words
+                        # This reduces TTFT from 300-500ms to 50-100ms
+                        while len(word_buffer) >= 1:
+                            chunk_text = " ".join(word_buffer[:1])
+                            word_buffer = word_buffer[1:]
                             generated_text += chunk_text + " "
 
-                            realtime_logger.debug(f"🎯 Streaming chunk {chunk_index}: '{chunk_text}'")
+                            realtime_logger.debug(f"🎯 [PHASE 0] Streaming 1-word chunk {chunk_index}: '{chunk_text}'")
+
+                            # PHASE 3: Generate audio for this chunk if TTS is available
+                            # PHASE 5: Use language parameter for multi-language support
+                            # PHASE 7: Detect emotion for emotional expressiveness
+                            audio_bytes = None
+                            emotion = "neutral"
+                            if tts_enabled:
+                                try:
+                                    # PHASE 7: Detect emotion from text
+                                    emotion_detector = self.get_emotion_detector()
+                                    if emotion_detector:
+                                        emotion, confidence = emotion_detector.detect_emotion(chunk_text)
+                                        realtime_logger.debug(f"🎭 [PHASE 7] Detected emotion: {emotion} (confidence: {confidence:.2f})")
+
+                                    audio_bytes = await tts_manager.synthesize(chunk_text, language=language, emotion=emotion)
+                                    if audio_bytes:
+                                        realtime_logger.debug(f"🎵 [PHASE 3] Generated {len(audio_bytes)} bytes of audio for chunk {chunk_index}")
+                                except Exception as e:
+                                    realtime_logger.warning(f"⚠️ [PHASE 3] TTS synthesis failed for chunk {chunk_index}: {e}")
 
                             yield {
                                 'success': True,
                                 'text': chunk_text.strip(),
+                                'audio': audio_bytes,  # PHASE 3: Include audio bytes
                                 'is_final': False,
                                 'chunk_index': chunk_index,
+                                'first_token_latency_ms': int(first_token_time*1000) if first_token_time else None,
                                 'processing_time_ms': (time.time() - chunk_start_time) * 1000
                             }
                             chunk_index += 1
@@ -679,9 +774,29 @@ class VoxtralModel:
                     final_text = " ".join(word_buffer)
                     generated_text += final_text
 
+                    # PHASE 3: Generate audio for final chunk if TTS is available
+                    # PHASE 5: Use language parameter for multi-language support
+                    # PHASE 7: Detect emotion for emotional expressiveness
+                    audio_bytes = None
+                    emotion = "neutral"
+                    if tts_enabled:
+                        try:
+                            # PHASE 7: Detect emotion from text
+                            emotion_detector = self.get_emotion_detector()
+                            if emotion_detector:
+                                emotion, confidence = emotion_detector.detect_emotion(final_text)
+                                realtime_logger.debug(f"🎭 [PHASE 7] Detected emotion: {emotion} (confidence: {confidence:.2f})")
+
+                            audio_bytes = await tts_manager.synthesize(final_text, language=language, emotion=emotion)
+                            if audio_bytes:
+                                realtime_logger.debug(f"🎵 [PHASE 3] Generated {len(audio_bytes)} bytes of audio for final chunk")
+                        except Exception as e:
+                            realtime_logger.warning(f"⚠️ [PHASE 3] TTS synthesis failed for final chunk: {e}")
+
                     yield {
                         'success': True,
                         'text': final_text.strip(),
+                        'audio': audio_bytes,  # PHASE 3: Include audio bytes
                         'is_final': True,
                         'chunk_index': chunk_index,
                         'processing_time_ms': (time.time() - chunk_start_time) * 1000

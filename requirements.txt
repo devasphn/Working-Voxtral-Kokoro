@@ -42,6 +42,12 @@ python-engineio>=4.7.0
 pyaudio>=0.2.11
 pillow>=10.1.0
 
+# PHASE 2: Text-to-Speech (TTS) Integration
+# Chatterbox TTS for voice output
+# Note: Chatterbox is available via HuggingFace transformers
+# Additional audio processing for TTS
+scipy>=1.11.0
+
 # Configuration and utilities
 pyyaml>=6.0.1
 python-dotenv>=1.0.0
