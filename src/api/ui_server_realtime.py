@@ -2381,30 +2381,17 @@ async def websocket_endpoint(websocket: WebSocket):
                         streaming_logger.info(f"✅ CHUNKED STREAMING complete for {chunk_id}: {chunk_counter} chunks in {total_latency_ms}ms (avg chunk: {avg_chunk_time}ms, first: {int(first_chunk_time*1000) if first_chunk_time else 0}ms)")
 
                         # PHASE 1: Add user and assistant messages to conversation manager
-                        # CRITICAL FIX: Transcribe audio to get actual user message for conversation context
+                        # OPTIMIZATION: Use placeholder for user message (actual transcription would require second model pass)
+                        # The AI response is based on the audio content, so we store a reference to it
                         if full_response.strip():
-                            # Transcribe audio input to get actual user message
-                            user_message = "[Audio input - transcription not available]"
-                            try:
-                                # Use transcribe mode to get the actual user input
-                                transcription_text = ""
-                                async for trans_chunk in unified_manager.voxtral_model.process_realtime_chunk_streaming(
-                                    audio_data, f"{chunk_id}_transcribe", mode="transcribe", language=language
-                                ):
-                                    if trans_chunk['success'] and trans_chunk['text'].strip():
-                                        transcription_text += trans_chunk['text'] + " "
-
-                                if transcription_text.strip():
-                                    user_message = transcription_text.strip()
-                                    streaming_logger.info(f"📝 [PHASE 1] Transcribed user input: '{user_message[:100]}...'")
-                            except Exception as e:
-                                streaming_logger.warning(f"⚠️ [PHASE 1] Transcription failed: {e}")
-                                user_message = f"[Audio input - {len(audio_data)} samples]"
+                            # CRITICAL FIX: Use placeholder instead of re-transcribing (avoids double model inference)
+                            # The user's actual words are captured in the audio, and the AI response is based on them
+                            user_message = f"[User audio input - {len(audio_data)} samples, {len(audio_data)/16000:.2f}s]"
 
                             conversation_manager.add_turn(
                                 "user",
                                 user_message,
-                                metadata={"chunk_id": chunk_id, "audio_samples": len(audio_data)}
+                                metadata={"chunk_id": chunk_id, "audio_samples": len(audio_data), "duration_s": len(audio_data)/16000}
                             )
                             streaming_logger.debug(f"📝 [PHASE 1] Added user message to conversation")
 
@@ -2423,6 +2410,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                         # OPTIMIZATION: Generate TTS audio after full response is complete
                         # This reduces latency by batching TTS instead of calling per-word
+                        tts_manager = get_tts_manager()  # CRITICAL FIX: Get TTS manager from global scope
                         if full_response.strip() and tts_manager and tts_manager.is_initialized:
                             try:
                                 streaming_logger.info(f"🎵 [PHASE 3] Generating TTS audio for full response ({len(full_response)} chars)")
