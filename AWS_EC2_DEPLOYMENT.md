@@ -123,6 +123,7 @@ source ~/voxtral_env/bin/activate
 pip install pyaudio
 pip install bitsandbytes
 pip install -r requirements.txt
+pip install flash-attn --no-build-isolation
 ```
 
 ### Step 8: Create Directory Structure

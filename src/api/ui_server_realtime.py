@@ -669,22 +669,37 @@ async def home(request: Request):
             return audioContext;
         }
         
-        // Sequential audio playback
+        // Sequential audio playback - FIXED with audio context initialization
         function playNextAudioChunk() {
             if (audioQueue.length === 0) {
                 isPlayingAudio = false;
                 return;
             }
-            
+
+            // CRITICAL FIX: Ensure audio context is initialized
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                log('🎵 Audio context initialized in playNextAudioChunk');
+            }
+
+            // Resume audio context if suspended
+            if (audioContext.state === 'suspended') {
+                audioContext.resume().then(() => {
+                    log('🎵 Audio context resumed');
+                }).catch((e) => {
+                    log('⚠️ Failed to resume audio context: ' + e);
+                });
+            }
+
             isPlayingAudio = true;
             const audioItem = audioQueue.shift();
             const source = audioContext.createBufferSource();
             source.buffer = audioItem.buffer;
             source.connect(audioContext.destination);
-            
+
             source.onended = () => {
                 log(`✅ Audio chunk ${audioItem.chunk_id} played`);
-                
+
                 // Play next chunk immediately
                 if (audioQueue.length > 0) {
                     setTimeout(playNextAudioChunk, 50); // Small gap between chunks
@@ -693,7 +708,7 @@ async def home(request: Request):
                     log('🎉 All audio chunks played');
                 }
             };
-            
+
             source.start();
         }
         
@@ -1157,7 +1172,7 @@ async def home(request: Request):
             }
         }
 
-        // PHASE 4: Process audio queue with Web Audio API
+        // PHASE 4: Process audio queue with Web Audio API - FIXED
         async function processAudioQueuePhase4() {
             if (isPlayingAudio || audioQueue.length === 0) {
                 return;
@@ -1165,6 +1180,22 @@ async def home(request: Request):
 
             isPlayingAudio = true;
             updateAudioQueueDisplay();
+
+            // CRITICAL FIX: Ensure audio context is initialized and resumed
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                log('🎵 [PHASE 4] Audio context initialized');
+            }
+
+            // Resume audio context if suspended (browser autoplay policy)
+            if (audioContext.state === 'suspended') {
+                try {
+                    await audioContext.resume();
+                    log('🎵 [PHASE 4] Audio context resumed from suspended state');
+                } catch (e) {
+                    log('⚠️ [PHASE 4] Failed to resume audio context: ' + e);
+                }
+            }
 
             while (audioQueue.length > 0) {
                 const audioItem = audioQueue.shift();
@@ -1188,36 +1219,50 @@ async def home(request: Request):
             log('🎵 [PHASE 4] Audio queue processing completed');
         }
 
-        // PHASE 4: Play individual audio item using Web Audio API
+        // PHASE 4: Play individual audio item using Web Audio API - FIXED
         function playAudioItemPhase4(audioItem) {
             return new Promise((resolve, reject) => {
                 try {
                     // Initialize audio context if needed
                     if (!audioContext) {
                         audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                        log('🎵 [PHASE 4] Audio context created in playAudioItemPhase4');
                     }
 
-                    // Resume context if suspended
+                    // Ensure context is running
                     if (audioContext.state === 'suspended') {
                         audioContext.resume().then(() => {
                             playAudioBuffer(audioItem, resolve, reject);
-                        }).catch(reject);
+                        }).catch((e) => {
+                            log('⚠️ [PHASE 4] Failed to resume context: ' + e);
+                            reject(e);
+                        });
                     } else {
                         playAudioBuffer(audioItem, resolve, reject);
                     }
                 } catch (error) {
+                    log('❌ [PHASE 4] Error in playAudioItemPhase4: ' + error);
                     reject(error);
                 }
             });
         }
 
-        // PHASE 4: Decode and play audio buffer
+        // PHASE 4: Decode and play audio buffer - FIXED
         function playAudioBuffer(audioItem, resolve, reject) {
             try {
+                // CRITICAL FIX: Ensure we have valid audio data
+                if (!audioItem.audioBuffer || audioItem.audioBuffer.byteLength === 0) {
+                    log('❌ [PHASE 4] Invalid audio buffer: empty or null');
+                    reject(new Error('Invalid audio buffer'));
+                    return;
+                }
+
+                log(`🎵 [PHASE 4] Decoding audio buffer (${audioItem.audioBuffer.byteLength} bytes)`);
+
                 audioContext.decodeAudioData(
                     audioItem.audioBuffer,
                     (decodedBuffer) => {
-                        log(`🎵 [PHASE 4] Decoded audio buffer: ${decodedBuffer.duration.toFixed(2)}s`);
+                        log(`🎵 [PHASE 4] Decoded audio buffer: ${decodedBuffer.duration.toFixed(2)}s, channels: ${decodedBuffer.numberOfChannels}`);
 
                         const source = audioContext.createBufferSource();
                         source.buffer = decodedBuffer;
@@ -1228,8 +1273,18 @@ async def home(request: Request):
                             resolve();
                         };
 
-                        source.start(0);
-                        log(`🎵 [PHASE 4] Started playing audio chunk ${audioItem.chunkId}`);
+                        source.onerror = (e) => {
+                            log(`❌ [PHASE 4] Audio source error: ${e}`);
+                            reject(e);
+                        };
+
+                        try {
+                            source.start(0);
+                            log(`🎵 [PHASE 4] Started playing audio chunk ${audioItem.chunkId}`);
+                        } catch (e) {
+                            log(`❌ [PHASE 4] Failed to start audio: ${e}`);
+                            reject(e);
+                        }
                     },
                     (error) => {
                         log(`❌ [PHASE 4] Failed to decode audio: ${error}`);
@@ -1237,6 +1292,7 @@ async def home(request: Request):
                     }
                 );
             } catch (error) {
+                log('❌ [PHASE 4] Error in playAudioBuffer: ' + error);
                 reject(error);
             }
         }
@@ -1327,6 +1383,22 @@ async def home(request: Request):
         async function processAudioQueue() {
             if (isPlayingAudio || audioQueue.length === 0) {
                 return;
+            }
+
+            // CRITICAL FIX: Ensure audio context is initialized
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                log('🎵 Audio context initialized in processAudioQueue');
+            }
+
+            // Resume audio context if suspended
+            if (audioContext.state === 'suspended') {
+                try {
+                    await audioContext.resume();
+                    log('🎵 Audio context resumed');
+                } catch (e) {
+                    log('⚠️ Failed to resume audio context: ' + e);
+                }
             }
 
             isPlayingAudio = true;
@@ -1569,12 +1641,28 @@ async def home(request: Request):
             if (isPlayingChunks || audioChunkQueue.length === 0) {
                 return;
             }
-            
+
+            // CRITICAL FIX: Ensure audio context is initialized
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                log('🎵 Audio context initialized in processAudioChunkQueue');
+            }
+
+            // Resume audio context if suspended
+            if (audioContext.state === 'suspended') {
+                try {
+                    await audioContext.resume();
+                    log('🎵 Audio context resumed');
+                } catch (e) {
+                    log('⚠️ Failed to resume audio context: ' + e);
+                }
+            }
+
             isPlayingChunks = true;
-            
+
             while (audioChunkQueue.length > 0) {
                 const chunk = audioChunkQueue.shift();
-                
+
                 try {
                     // Create and play audio source
                     const source = audioContext.createBufferSource();
@@ -2293,11 +2381,26 @@ async def websocket_endpoint(websocket: WebSocket):
                         streaming_logger.info(f"✅ CHUNKED STREAMING complete for {chunk_id}: {chunk_counter} chunks in {total_latency_ms}ms (avg chunk: {avg_chunk_time}ms, first: {int(first_chunk_time*1000) if first_chunk_time else 0}ms)")
 
                         # PHASE 1: Add user and assistant messages to conversation manager
-                        # Note: In a full implementation, we would transcribe the audio to get the actual user message
-                        # For now, we add a placeholder user message
+                        # CRITICAL FIX: Transcribe audio to get actual user message for conversation context
                         if full_response.strip():
-                            # Add user message (placeholder - would be transcribed audio in full implementation)
-                            user_message = f"[Audio input - {len(audio_data)} samples]"
+                            # Transcribe audio input to get actual user message
+                            user_message = "[Audio input - transcription not available]"
+                            try:
+                                # Use transcribe mode to get the actual user input
+                                transcription_text = ""
+                                async for trans_chunk in unified_manager.voxtral_model.process_realtime_chunk_streaming(
+                                    audio_data, f"{chunk_id}_transcribe", mode="transcribe", language=language
+                                ):
+                                    if trans_chunk['success'] and trans_chunk['text'].strip():
+                                        transcription_text += trans_chunk['text'] + " "
+
+                                if transcription_text.strip():
+                                    user_message = transcription_text.strip()
+                                    streaming_logger.info(f"📝 [PHASE 1] Transcribed user input: '{user_message[:100]}...'")
+                            except Exception as e:
+                                streaming_logger.warning(f"⚠️ [PHASE 1] Transcription failed: {e}")
+                                user_message = f"[Audio input - {len(audio_data)} samples]"
+
                             conversation_manager.add_turn(
                                 "user",
                                 user_message,
@@ -2317,6 +2420,33 @@ async def websocket_endpoint(websocket: WebSocket):
                             # Log conversation summary
                             summary = conversation_manager.get_history_summary()
                             streaming_logger.info(f"📊 [PHASE 1] Conversation summary: {summary['total_turns']} turns, {summary['total_characters']} chars")
+
+                        # OPTIMIZATION: Generate TTS audio after full response is complete
+                        # This reduces latency by batching TTS instead of calling per-word
+                        if full_response.strip() and tts_manager and tts_manager.is_initialized:
+                            try:
+                                streaming_logger.info(f"🎵 [PHASE 3] Generating TTS audio for full response ({len(full_response)} chars)")
+                                tts_start = time.time()
+
+                                # Detect emotion from full response
+                                emotion = "neutral"
+                                emotion_detector = unified_manager.voxtral_model.get_emotion_detector()
+                                if emotion_detector:
+                                    emotion, confidence = emotion_detector.detect_emotion(full_response)
+                                    streaming_logger.debug(f"🎭 [PHASE 7] Detected emotion: {emotion} (confidence: {confidence:.2f})")
+
+                                # Synthesize full response to audio
+                                audio_bytes = await tts_manager.synthesize(full_response, language=language, emotion=emotion)
+
+                                if audio_bytes:
+                                    tts_time = (time.time() - tts_start) * 1000
+                                    streaming_logger.info(f"🎵 [PHASE 3] Generated {len(audio_bytes)} bytes of audio in {tts_time:.1f}ms")
+
+                                    # Send audio as binary data
+                                    await websocket.send_bytes(audio_bytes)
+                                    streaming_logger.debug(f"🎵 [PHASE 3] Sent audio to client")
+                            except Exception as e:
+                                streaming_logger.warning(f"⚠️ [PHASE 3] TTS synthesis failed: {e}")
 
                         # CRITICAL FIX: Send conversation_complete message to reset VAD state
                         # This allows the frontend to call resetForNextInput() and enable continuous streaming
