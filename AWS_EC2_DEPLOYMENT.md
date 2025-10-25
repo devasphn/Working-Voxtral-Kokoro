@@ -69,7 +69,9 @@ ssh -i your-key.pem ubuntu@your-instance-ip
 ```bash
 sudo apt update
 sudo apt upgrade -y
-sudo apt install -y build-essential git curl wget python3.10 python3.10-venv python3.10-dev
+sudo apt install -y build-essential git curl wget python3 python3-venv python3-dev
+sudo apt-get update
+sudo apt-get install python3-dev portaudio19-dev
 ```
 
 ### Step 3: NVIDIA Driver Installation (for g5.xlarge GPU)
@@ -104,7 +106,7 @@ sudo apt install -y cuda-12-1
 ### Step 5: Python Virtual Environment
 ```bash
 cd /home/ubuntu
-python3.10 -m venv voxtral_env
+python3 -m venv voxtral_env
 source voxtral_env/bin/activate
 pip install --upgrade pip setuptools wheel
 ```
@@ -118,6 +120,7 @@ cd Working-Voxtral-Kokoro
 ### Step 7: Install Dependencies
 ```bash
 source ~/voxtral_env/bin/activate
+pip install pyaudio
 pip install -r requirements.txt
 ```
 
