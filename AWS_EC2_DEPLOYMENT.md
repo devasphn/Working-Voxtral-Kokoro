@@ -121,6 +121,7 @@ cd Working-Voxtral-Kokoro
 ```bash
 source ~/voxtral_env/bin/activate
 pip install pyaudio
+pip install bitsandbytes
 pip install -r requirements.txt
 ```
 
